@@ -259,6 +259,29 @@ def test_gateway_accepts_anthropic_messages(monkeypatch, test_config, bucket_mgr
     assert state_store.get_recent_bucket_ids("sess-anthropic", 5) == set()
 
 
+def test_gateway_defaults_anthropic_session_id(monkeypatch, test_config, bucket_mgr):
+    app, _, state_store, captured = _build_service(
+        monkeypatch,
+        _gateway_config(test_config, upstream_default_model="qwen3.5-plus"),
+        bucket_mgr,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/messages",
+            headers={"x-api-key": "gateway-secret"},
+            json={
+                "model": "qwen3.5-plus",
+                "messages": [{"role": "user", "content": "你好"}],
+                "max_tokens": 128,
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured[0]["json"]["messages"][-1] == {"role": "user", "content": "你好"}
+    assert state_store.get_recent_bucket_ids("xiaoyu-main", 5) == set()
+
+
 def test_gateway_rejects_anthropic_streaming(monkeypatch, test_config, bucket_mgr):
     app, _, _, captured = _build_service(monkeypatch, _gateway_config(test_config), bucket_mgr)
 

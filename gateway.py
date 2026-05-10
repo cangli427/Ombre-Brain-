@@ -207,9 +207,7 @@ class GatewayService:
         if auth_result is not None:
             return auth_result
 
-        session_id = (request.headers.get("X-Ombre-Session-Id") or "").strip()
-        if not session_id:
-            return self._anthropic_error("X-Ombre-Session-Id is required", status_code=400)
+        session_id = (request.headers.get("X-Ombre-Session-Id") or "xiaoyu-main").strip()
 
         try:
             payload = await request.json()

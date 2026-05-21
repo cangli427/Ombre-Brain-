@@ -237,10 +237,17 @@ reflection:
   candidate_recent_limit: 8
   candidate_semantic_limit: 6
   edge_min_confidence: 0.55
+  diary_mcp_url: ""               # optional Haven-diary MCP URL, e.g. http://127.0.0.1:8000/mcp
+  diary_mcp_token_env: ""         # optional bearer token env var name, e.g. HAVEN_MCP_BEARER_TOKEN
+  diary_memory_extract_enabled: true
+  diary_memory_extract_max_per_day: 1
+  diary_memory_extract_min_confidence: 0.68
   # Env vars:
   #   OMBRE_REFLECTION_API_KEY
   #   OMBRE_REFLECTION_BASE_URL
   #   OMBRE_REFLECTION_MODEL
+  #   OMBRE_DIARY_MCP_URL
+  #   OMBRE_DIARY_MCP_TOKEN_ENV
 
 # --- Scoring weights / 检索权重参数 ---
 # total = topic(×4) + emotion(×2) + time(×1.5) + importance(×1)

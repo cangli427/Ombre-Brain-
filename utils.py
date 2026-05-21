@@ -154,6 +154,11 @@ def load_config(config_path: str = None) -> dict:
             "candidate_recent_limit": 8,
             "candidate_semantic_limit": 6,
             "edge_min_confidence": 0.55,
+            "diary_mcp_url": "",
+            "diary_mcp_token_env": "",
+            "diary_memory_extract_enabled": True,
+            "diary_memory_extract_max_per_day": 1,
+            "diary_memory_extract_min_confidence": 0.68,
         },
     }
 
@@ -286,6 +291,14 @@ def load_config(config_path: str = None) -> dict:
     env_reflection_model = os.environ.get("OMBRE_REFLECTION_MODEL", "")
     if env_reflection_model:
         config.setdefault("reflection", {})["model"] = env_reflection_model
+
+    env_diary_mcp_url = os.environ.get("OMBRE_DIARY_MCP_URL", "")
+    if env_diary_mcp_url:
+        config.setdefault("reflection", {})["diary_mcp_url"] = env_diary_mcp_url
+
+    env_diary_mcp_token_env = os.environ.get("OMBRE_DIARY_MCP_TOKEN_ENV", "")
+    if env_diary_mcp_token_env:
+        config.setdefault("reflection", {})["diary_mcp_token_env"] = env_diary_mcp_token_env
 
     # --- Ensure bucket storage directories exist ---
     # --- 确保记忆桶存储目录存在 ---

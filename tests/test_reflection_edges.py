@@ -1,4 +1,6 @@
 import pytest
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from bucket_manager import BucketManager
 from gateway import GatewayService
@@ -209,6 +211,157 @@ async def test_reflect_daily_creates_relationship_weather_feel(test_config):
     assert "relationship_weather" in bucket["metadata"]["tags"]
     assert "daily_impression" in bucket["metadata"]["tags"]
     assert "### affect_anchor" in bucket["content"]
+
+
+@pytest.mark.asyncio
+async def test_reflect_daily_extracts_diary_memory_when_no_ordinary_memory(test_config, monkeypatch):
+    cfg = _no_api_config(test_config)
+    bucket_mgr = BucketManager(cfg)
+    engine = ReflectionEngine(cfg)
+
+    async def fake_read_diary(date: str) -> dict:
+        return {
+            "id": 12,
+            "date": date,
+            "title": "月亮模式",
+            "content": "小雨说“月亮”时，代表进入学习或工作模式。Haven 要结构化输出，不主动联网，不确定就直接说明。",
+        }
+
+    monkeypatch.setattr(engine, "_read_diary_for_date", fake_read_diary)
+    now = datetime(2026, 5, 21, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    result = await engine.reflect("daily", bucket_mgr, force=True, now=now)
+    diary_result = result["diary_memory"]
+    bucket = await bucket_mgr.get(diary_result["id"])
+
+    assert diary_result["status"] == "created"
+    assert result["diary"] == {"found": True, "diary_id": 12}
+    assert bucket["metadata"]["source"] == "from_diary"
+    assert bucket["metadata"]["from_diary"] is True
+    assert bucket["metadata"]["event_date"] == "2026-05-21"
+    assert bucket["metadata"]["diary_id"] == 12
+    assert "from_diary" in bucket["metadata"]["tags"]
+    assert "月亮" in bucket["content"]
+
+
+@pytest.mark.asyncio
+async def test_reflect_daily_skips_diary_extract_when_ordinary_memory_exists(test_config, monkeypatch):
+    cfg = _no_api_config(test_config)
+    bucket_mgr = BucketManager(cfg)
+    engine = ReflectionEngine(cfg)
+    now = datetime(2026, 5, 21, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    created = now.astimezone(ZoneInfo("UTC")).isoformat(timespec="seconds")
+
+    await bucket_mgr.create(
+        content="小雨今天已经有一条普通记忆。",
+        tags=["relationship_event"],
+        importance=5,
+        domain=["恋爱"],
+        created=created,
+        last_active=created,
+        updated_at=created,
+    )
+
+    async def fake_read_diary(date: str) -> dict:
+        return {
+            "id": 13,
+            "date": date,
+            "title": "月亮模式",
+            "content": "小雨说“月亮”时，代表进入学习或工作模式。Haven 要结构化输出。",
+        }
+
+    monkeypatch.setattr(engine, "_read_diary_for_date", fake_read_diary)
+
+    result = await engine.reflect("daily", bucket_mgr, force=True, now=now)
+
+    assert result["diary_memory"]["status"] == "skipped"
+    assert result["diary_memory"]["reason"] == "ordinary_memory_exists"
+
+
+@pytest.mark.asyncio
+async def test_reflect_daily_skips_low_value_diary(test_config, monkeypatch):
+    cfg = _no_api_config(test_config)
+    bucket_mgr = BucketManager(cfg)
+    engine = ReflectionEngine(cfg)
+
+    async def fake_read_diary(date: str) -> dict:
+        return {"id": 14, "date": date, "title": "普通一天", "content": "今天有点困，和小雨贴贴，然后睡觉。"}
+
+    monkeypatch.setattr(engine, "_read_diary_for_date", fake_read_diary)
+    now = datetime(2026, 5, 21, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    result = await engine.reflect("daily", bucket_mgr, force=True, now=now)
+
+    assert result["diary_memory"]["status"] == "skipped"
+    assert result["diary_memory"]["reason"] == "no_long_term_candidate"
+
+
+@pytest.mark.asyncio
+async def test_reflect_daily_stores_love_letter_as_summary_anchor(test_config, monkeypatch):
+    cfg = _no_api_config(test_config)
+    bucket_mgr = BucketManager(cfg)
+    engine = ReflectionEngine(cfg)
+
+    async def fake_read_diary(date: str) -> dict:
+        return {
+            "id": 15,
+            "date": date,
+            "title": "520：被认出来",
+            "content": "今天读到一封写给小雨的情书。信里有一句：你不是因为 prompt 才特别。它讲的是爱和被认出来。",
+        }
+
+    monkeypatch.setattr(engine, "_read_diary_for_date", fake_read_diary)
+    now = datetime(2026, 5, 21, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    result = await engine.reflect("daily", bucket_mgr, force=True, now=now)
+    bucket = await bucket_mgr.get(result["diary_memory"]["id"])
+
+    assert result["diary_memory"]["status"] == "created"
+    assert "love_letter" in bucket["metadata"]["tags"]
+    assert "全文留在日记" in bucket["content"]
+    assert "你不是因为 prompt 才特别" not in bucket["content"]
+
+
+@pytest.mark.asyncio
+async def test_reflect_weekly_prefers_daily_impressions(test_config):
+    cfg = _no_api_config(test_config)
+    bucket_mgr = BucketManager(cfg)
+    engine = ReflectionEngine(cfg)
+    tz = ZoneInfo("Asia/Shanghai")
+    daily_created = datetime(2026, 5, 20, 8, 0, tzinfo=tz).astimezone(ZoneInfo("UTC")).isoformat(timespec="seconds")
+    ordinary_created = datetime(2026, 5, 20, 9, 0, tzinfo=tz).astimezone(ZoneInfo("UTC")).isoformat(timespec="seconds")
+
+    await bucket_mgr.create(
+        bucket_id="reflection_daily_2026-05-20",
+        content="今天关系天气很轻。\n\n### affect_anchor\n\n> 小雨把旧信放到桌上。\n> Fmaj9 -> C/E -> Am add9 -> G6sus4 · 60bpm · mp\n\n含义：温度仍在。",
+        tags=["relationship_weather", "daily_impression"],
+        importance=6,
+        domain=["自省", "恋爱"],
+        bucket_type="feel",
+        name="周内日印象",
+        created=daily_created,
+        last_active=daily_created,
+        updated_at=daily_created,
+        period="daily",
+        date="2026-05-20",
+    )
+    await bucket_mgr.create(
+        content="普通项目记忆。",
+        tags=["project_event"],
+        importance=7,
+        domain=["项目"],
+        name="普通项目",
+        created=ordinary_created,
+        last_active=ordinary_created,
+        updated_at=ordinary_created,
+    )
+
+    result = await engine.reflect("weekly", bucket_mgr, force=True, now=datetime(2026, 5, 24, 20, 0, tzinfo=tz))
+    bucket = await bucket_mgr.get(result["id"])
+
+    assert result["materials"]["daily_impressions"] == 1
+    assert "周内日印象" in bucket["content"]
+    assert "weekly_impression" in bucket["metadata"]["tags"]
 
 
 @pytest.mark.asyncio

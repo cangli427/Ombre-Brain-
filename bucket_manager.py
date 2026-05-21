@@ -123,6 +123,7 @@ class BucketManager:
         confidence: float | None = None,
         period: str | None = None,
         date: str | None = None,
+        extra_metadata: dict | None = None,
     ) -> str:
         """
         Create a new memory bucket, return bucket ID.
@@ -179,6 +180,12 @@ class BucketManager:
             metadata["digested"] = True
         if source:
             metadata["source"] = source
+        if extra_metadata:
+            reserved = set(metadata.keys()) | {"content"}
+            for key, value in extra_metadata.items():
+                if key in reserved or value is None:
+                    continue
+                metadata[str(key)] = value
 
         # --- Assemble Markdown file (frontmatter + body) ---
         # --- 组装 Markdown 文件 ---

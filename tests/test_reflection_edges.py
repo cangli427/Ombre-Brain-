@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from bucket_manager import BucketManager
 from gateway import GatewayService
 from memory_edges import MemoryEdgeStore
-from reflection_engine import ReflectionEngine
+from reflection_engine import REFLECT_PROMPT, ReflectionEngine
 
 
 class DummyDehydrator:
@@ -54,6 +54,36 @@ def _no_api_config(test_config: dict) -> dict:
         "timezone": "Asia/Shanghai",
     }
     return test_config
+
+
+def test_reflect_prompt_does_not_offer_fixed_chord_template():
+    assert '"chords": "Fmaj9 -> C/E -> Am add9 -> G6sus4"' not in REFLECT_PROMPT
+    assert "不要复用 schema 示例、旧输出或固定模板" in REFLECT_PROMPT
+    assert "不要默认写 Fmaj9 -> C/E -> Am add9 -> G6sus4" in REFLECT_PROMPT
+
+
+def test_fallback_reflection_anchor_varies_by_day(test_config):
+    cfg = _no_api_config(test_config)
+    engine = ReflectionEngine(cfg)
+
+    chords = [
+        engine._fallback_reflection(
+            "daily",
+            f"2026-05-{day:02d}",
+            {
+                "buckets": [{"name": f"第 {day} 天的关系天气"}],
+                "commitments": [],
+                "daily_impressions": [],
+                "persona_events": [],
+                "diary": None,
+            },
+        )["affect_anchor"]["chords"]
+        for day in range(20, 28)
+    ]
+
+    assert len(set(chords)) > 1
+    assert "Fmaj9 -> C/E -> Am add9 -> G6sus4" not in chords
+    assert all(2 <= len(chord.split(" -> ")) <= 4 for chord in chords)
 
 
 def test_memory_edge_store_dedupes_and_returns_related(test_config):

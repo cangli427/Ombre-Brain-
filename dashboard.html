@@ -309,7 +309,6 @@
   }
   .detail-edit-button,
   .content-edit-actions button,
-  .comment-send-button,
   .comment-delete-button {
     border: 1px solid var(--border);
     background: var(--surface);
@@ -324,7 +323,6 @@
   }
   .detail-edit-button:hover,
   .content-edit-actions button:hover,
-  .comment-send-button:hover,
   .comment-delete-button:hover {
     color: var(--accent-dark);
     box-shadow: 3px 3px 8px var(--shadow-dark-subtle), -3px -3px 8px var(--shadow-light);
@@ -392,10 +390,6 @@
   }
   .comment-form {
     margin-top: 14px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 34px;
-    gap: 8px;
-    align-items: end;
   }
   .comment-form textarea {
     width: 100%;
@@ -409,13 +403,6 @@
     font-size: 13px;
     line-height: 1.6;
     box-sizing: border-box;
-  }
-  .comment-send-button {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    font-size: 16px;
-    line-height: 1;
   }
   .comment-delete-button {
     position: absolute;
@@ -1453,7 +1440,6 @@ async function showDetail(id) {
     var commentFormHtml =
       '<form class="comment-form" onsubmit="submitBucketComment(event, \'' + id + '\')">' +
         '<textarea name="content" placeholder="写一圈新的年轮…" onkeydown="handleCommentKeydown(event)"></textarea>' +
-        '<button type="submit" class="comment-send-button" title="发送" aria-label="发送">↵</button>' +
       '</form>';
     content.innerHTML =
       '<div class="detail-title-row">' +
@@ -1560,8 +1546,8 @@ async function submitBucketComment(event, bucketId) {
   var content = (textarea.value || '').trim();
   if (!content) return;
   var button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
-  button.textContent = '…';
+  if (button) button.disabled = true;
+  textarea.disabled = true;
   try {
     var res = await authFetch(BASE + '/api/bucket/' + bucketId + '/comments', {
       method: 'POST',
@@ -1577,8 +1563,9 @@ async function submitBucketComment(event, bucketId) {
     await loadBuckets();
   } catch (e) {
     alert('写入年轮失败: ' + e.message);
-    button.disabled = false;
-    button.textContent = '↵';
+    if (button) button.disabled = false;
+    textarea.disabled = false;
+    textarea.focus();
   }
 }
 

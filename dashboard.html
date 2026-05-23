@@ -942,7 +942,7 @@
   .flow-step.active { border-color: var(--accent); color: var(--accent); }
   .flow-arrow { color: var(--text-light); font-size: 16px; }
 
-  .reflection-shell { max-width: 1160px; margin: 0 auto; }
+  .reflection-shell { max-width: 980px; margin: 0 auto; }
   .reflection-toolbar {
     display: flex;
     align-items: center;
@@ -981,15 +981,15 @@
   .reflection-entry button:hover { border-color: var(--accent); }
   .reflection-board {
     display: grid;
-    grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
-    gap: 18px;
+    grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+    gap: 14px;
     align-items: start;
   }
   .reflection-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 20px;
-    padding: 20px;
+    padding: 18px;
     box-shadow: 6px 6px 16px var(--shadow-dark-subtle), -6px -6px 16px var(--shadow-light);
   }
   .reflection-card-head {
@@ -997,7 +997,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 14px;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
   }
   .reflection-card h3 {
     font-size: 15px;
@@ -1013,8 +1013,8 @@
     font-weight: 500;
   }
   .reflection-month-controls .reflection-nav-button {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
     padding: 0;
     border-radius: 999px;
   }
@@ -1026,9 +1026,9 @@
   }
   .reflection-weekdays {
     color: var(--text-light);
-    font-size: 11px;
+    font-size: 12px;
     text-align: center;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
   .reflection-card .reflection-day {
     position: relative;
@@ -1041,29 +1041,32 @@
     color: var(--text-dim);
     cursor: pointer;
     font: inherit;
+    font-size: 15px;
     padding: 0;
     box-shadow: none;
     transition: transform 0.16s ease;
   }
   .reflection-card .reflection-day:not(.empty):hover {
-    background: rgba(255,255,255,0.25);
+    background: rgba(47,79,79,0.1);
     color: var(--accent);
     transform: translateY(-1px);
     box-shadow: none;
   }
-  .reflection-card .reflection-day.selected {
+  .reflection-card .reflection-day.selected,
+  .reflection-card .reflection-day.selected:hover {
     color: #F0EDE4;
-    background: #8BA995;
-    box-shadow: 0 10px 24px rgba(139,169,149,0.24);
+    background: var(--accent);
+    box-shadow: 0 10px 24px rgba(47,79,79,0.24);
+    transform: none;
   }
   .reflection-day.empty { visibility: hidden; pointer-events: none; }
-  .reflection-day-number { font-size: 13px; line-height: 1; }
+  .reflection-day-number { line-height: 1; }
   .reflection-day-dot {
     position: absolute;
     left: 50%;
-    bottom: 7px;
-    width: 5px;
-    height: 5px;
+    bottom: 6px;
+    width: 4px;
+    height: 4px;
     border-radius: 999px;
     transform: translateX(-50%);
     border: 1px solid rgba(255,255,255,0.72);
@@ -1072,7 +1075,11 @@
     background: #F7F2E8 !important;
     border-color: rgba(255,255,255,0.88);
   }
-  .reflection-day-panel { margin-top: 0; }
+  .reflection-day-panel {
+    height: 360px;
+    margin-top: 0;
+    overflow-y: auto;
+  }
   .reflection-day-heading {
     display: flex;
     justify-content: space-between;
@@ -1160,6 +1167,7 @@
     .persona-event-time { white-space: normal; }
     .reflection-toolbar { align-items: flex-start; flex-direction: column; }
     .reflection-board { grid-template-columns: 1fr; }
+    .reflection-day-panel { height: auto; max-height: none; }
     .reflection-entry { grid-template-columns: 1fr; }
   }
 </style>
@@ -1658,7 +1666,7 @@ function renderReflectionReview() {
   for (var day = 1; day <= dayCount; day++) {
     var dateStr = formatLocalDate(year, month, day);
     var items = byDate[dateStr] || [];
-    var dot = items.length ? '<span class="reflection-day-dot" style="background:#8BA995"></span>' : '';
+    var dot = items.length ? '<span class="reflection-day-dot" style="background:var(--accent)"></span>' : '';
     cells.push(
       '<button type="button" class="reflection-day ' + (dateStr === reflectionSelectedDate ? 'selected' : '') + '" onclick="selectReflectionDate(\'' + dateStr + '\')">' +
         '<span class="reflection-day-number">' + day + '</span>' +

@@ -190,7 +190,30 @@ OMBRE_CHATGPT_OAUTH_PUBLIC_BASE_URL=
 
 ### 上游模型和备用 key
 
-`gateway.upstreams` 可以配多个站点，也可以给同一个站点配多个 key。普通字符串模型名会原样转发：
+`gateway.upstreams` 可以配多个站点，也可以给同一个站点配多个 key。常用字段如下：
+
+- `name`：上游站点的内部名字，可以继续用 `provider-a` / `provider-b` / `provider-c`；不一定要和模型别名一致。
+- `base_url`：模型站 OpenAI-compatible 地址，通常以 `/v1` 结尾。
+- `api_key_env`：单个 key 时继续用这个。
+- `api_key_envs`：多个备用 key 时用这个列表。
+- `models`：客户端可选择的模型列表；字符串写法会原样转发，字典写法可设置别名。
+
+单个站点、单个 key、模型名不会重复时，保持最简单写法就行：
+
+```yaml
+gateway:
+  upstreams:
+    - name: "provider-c"
+      base_url: "https://c.example.com/v1"
+      api_key_env: "OMBRE_GATEWAY_PROVIDER_C_API_KEY"
+      models:
+        - "deepseek-v4-pro"
+        - "deepseek-v4-flash"
+```
+
+上面等价于把 `id` 和 `upstream_model` 写成同一个值，不需要特意改成字典。
+
+同一个站点多个备用 key 时，把 `api_key_env` 换成 `api_key_envs`：
 
 ```yaml
 gateway:
@@ -206,7 +229,7 @@ gateway:
         - "model-a-fast"
 ```
 
-如果两个站点都有同名模型，用 `id` 暴露不同的客户端模型名，用 `upstream_model` 写上游真实模型名：
+如果两个站点都有同名模型，或想让客户端模型名更清楚，用 `id` 暴露不同的客户端模型名，用 `upstream_model` 写上游真实模型名：
 
 ```yaml
 gateway:
@@ -228,7 +251,31 @@ gateway:
 
 客户端请求 `site-b/deepseek-v4` 时，Gateway 会路由到 `site-b`，再把发给上游的 `model` 改成 `deepseek-v4`。
 
+一个站点里多个别名模型可以连续写：
+
+```yaml
+models:
+  - id: "provider-a/deepseek-v4"
+    upstream_model: "deepseek-v4"
+  - id: "provider-a/xxxxx"
+    upstream_model: "xxxxx"
+```
+
+`gateway.upstream_default_model` 可写可不写。它只在客户端请求没有传 `model` 时生效；如果客户端总会传模型名，可以不写。需要默认模型时，填客户端看到的名字，例如：
+
+```yaml
+gateway:
+  upstream_default_model: "provider-a/deepseek-v4"
+```
+
 Gateway 会按请求里的 `model` 找上游。遇到 `401/403/429/500/502/503/504` 或网络错误，会临时冷却当前 key，并尝试同上游的下一个 key。`400`、模型名错误、上下文太长这类请求本身的问题不会换 key。冷却时间由 `gateway.upstream_key_cooldown_seconds` 控制，默认 300 秒。
+
+`prompt_cache: "openai"` 和 `prompt_cache_retention: "24h"` 是 OpenAI prompt cache 提示。Gateway 会给上游请求加 `prompt_cache_key` 和 `prompt_cache_retention`，只适合确认支持这些字段的上游；不确定时保持关闭：
+
+```yaml
+prompt_cache: ""
+# prompt_cache_retention: ""
+```
 
 ### Compose
 

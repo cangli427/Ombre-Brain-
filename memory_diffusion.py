@@ -139,6 +139,16 @@ def _path_rank_key(path: "DiffusionPath") -> tuple[int, float, int]:
     return (_path_display_priority(path), path.score, -len(path.steps))
 
 
+def _hit_rank_key(hit: "DiffusionHit", options: DiffusionOptions) -> tuple[int, float | int, float]:
+    if options.chain_walk_enabled:
+        return (_path_display_priority(hit.best_path), -len(hit.best_path.steps), hit.activation)
+    return (
+        _path_display_priority(hit.best_path),
+        hit.activation,
+        -len(hit.best_path.steps),
+    )
+
+
 def _frontier_rank_key(state: "_PathState") -> tuple[int, float, int]:
     priority = max(
         (_relation_display_priority(step.relation_type) for step in state.steps),
@@ -322,14 +332,7 @@ def diffuse_memory(
                 )
             )
 
-    hits.sort(
-        key=lambda item: (
-            _path_display_priority(item.best_path),
-            item.activation,
-            -len(item.best_path.steps),
-        ),
-        reverse=True,
-    )
+    hits.sort(key=lambda item: _hit_rank_key(item, options), reverse=True)
     return hits[: options.top_k]
 
 

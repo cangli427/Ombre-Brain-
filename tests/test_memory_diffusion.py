@@ -99,6 +99,30 @@ def test_chain_walk_does_not_continue_through_generic_relation():
     assert [hit.bucket_id for hit in hits] == ["B"]
 
 
+def test_chain_walk_prefers_closer_hit_when_relation_quality_matches():
+    bucket_map = {bucket_id: _bucket(bucket_id) for bucket_id in ["A", "B", "C"]}
+    edges = [
+        {"source": "A", "target": "B", "relation_type": "context_of", "confidence": 0.9},
+        {"source": "B", "target": "C", "relation_type": "context_of", "confidence": 1.0},
+    ]
+
+    hits = diffuse_memory(
+        {"A": 1.0},
+        edges,
+        bucket_map,
+        options=DiffusionOptions(
+            max_hops=1,
+            top_k=2,
+            min_activation=0.0,
+            chain_walk_enabled=True,
+            chain_max_hops=4,
+            chain_min_confidence=0.72,
+        ),
+    )
+
+    assert [hit.bucket_id for hit in hits] == ["B", "C"]
+
+
 def test_diffusion_config_parses_chain_walk_options():
     options = diffusion_options_from_config(
         {

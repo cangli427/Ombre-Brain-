@@ -165,7 +165,7 @@ def _run_gateway_recall_case(cfg: dict, bucket_mgr: BucketManager, case: dict[st
     query = str(case["query"])
     all_buckets = _run(bucket_mgr.list_all(include_archive=False))
     all_moments, grouped_moments, moment_edges = service._refresh_moment_graph(all_buckets)
-    recalled_moments, moment_candidates, _suppressed_moments = _run(
+    recalled_moments, moment_candidates, _suppressed_moments, _suppressed_buckets = _run(
         service._select_dynamic_moments(query, session_id, all_buckets, grouped_moments)
     )
     recalled_memory = service._format_recalled_moments(

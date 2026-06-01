@@ -1148,9 +1148,10 @@ def _bucket_diffusion_path_summary(path, bucket_map: dict[str, dict], max_chars:
     return _clip_text(format_diffusion_path(path, bucket_map), max_chars)
 
 
-def _breath_one_hop_diffusion_options(top_k: int):
+def _breath_related_diffusion_options(top_k: int):
+    options = diffusion_options_from_config(config)
     return replace(
-        diffusion_options_from_config(config),
+        options,
         max_hops=1,
         top_k=max(0, int(top_k or 0)),
     )
@@ -1607,7 +1608,7 @@ async def _build_mcp_diffused_memory_block(
         seed_scores_for_buckets(source_buckets),
         edges,
         bucket_map,
-        options=_breath_one_hop_diffusion_options(len(source_ids) * limit_per_source),
+        options=_breath_related_diffusion_options(len(source_ids) * limit_per_source),
         exclude_ids=exclude_set,
         node_salience=node_salience,
         node_resonance=node_resonance,
@@ -2531,7 +2532,7 @@ async def _build_mcp_moment_diffused_memory_block(
         _seed_scores_for_moments(seed_moments),
         edges,
         moment_map,
-        options=_breath_one_hop_diffusion_options(len(seed_moments) * limit_per_source),
+        options=_breath_related_diffusion_options(len(seed_moments) * limit_per_source),
         exclude_ids={moment["moment_id"] for moment in seed_moments if moment.get("moment_id")},
         query_text=query_text,
     )

@@ -135,13 +135,17 @@ def test_memory_edge_store_dedupes_and_returns_related(test_config):
     store.add_edge("a", "b", "updates", confidence=0.6, reason="old")
     store.add_edge("a", "b", "updates", confidence=0.8, reason="new")
     store.add_edge("c", "a", "blocks", confidence=0.7, reason="incoming")
+    store.add_edge("a", "d", "reflects_on", confidence=0.9, reason="reflection")
+    store.add_edge("d", "e", "next_context", confidence=0.9, reason="followup")
 
     edges = store.list_edges()
-    assert len(edges) == 2
+    assert len(edges) == 4
     assert any(edge["reason"] == "new" for edge in edges)
+    assert any(edge["relation_type"] == "reflects_on" for edge in edges)
+    assert any(edge["relation_type"] == "next_context" for edge in edges)
 
-    related = store.related_edges(["a"], min_confidence=0.55, limit_per_source=2)
-    assert {edge["target"] for edge in related} == {"b", "c"}
+    related = store.related_edges(["a"], min_confidence=0.55, limit_per_source=4)
+    assert {edge["target"] for edge in related} == {"b", "c", "d"}
 
 
 @pytest.mark.asyncio

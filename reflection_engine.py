@@ -46,8 +46,8 @@ CLASSIFY_PROMPT = """你是 Ombre-Brain 的记忆关系整理器。
 
 规则：
 - tags 最多 5 个，只用确实匹配的标签。
-- relation_type 只能用 triggers / causes / precedes / context_of / same_event / updates / contradicts / supports / promises / blocks / belongs_to / emotional_echo / relates_to。
-- same_event 用于同一事件、同一场景或同一句暗号的两条记忆；context_of 用于候选旧记忆给新记忆提供前情；precedes 用于候选旧记忆在时间上早于新记忆。
+- relation_type 只能用 triggers / causes / precedes / context_of / same_event / updates / next_context / previous_context / reflects_on / evidenced_by / contradicts / supports / promises / blocks / belongs_to / emotional_echo / relates_to。
+- same_event 用于同一事件、同一场景或同一句暗号的两条记忆；context_of 用于候选旧记忆给新记忆提供前情；precedes 用于候选旧记忆在时间上早于新记忆；reflects_on 用于事后反思；evidenced_by 用于证据来源。
 - edges 最多 3 条，target_memory_id 必须来自候选旧记忆。
 - confidence 表示这次判断有多可靠。
 - affect_anchor 只给重要且有情绪温度的记忆。普通技术进度、部署日志、路径、端口、报错、临时待办不要加。

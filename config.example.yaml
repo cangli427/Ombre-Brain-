@@ -300,6 +300,24 @@ memory_diffusion:
   decay: 0.55
   include_incoming: true
   max_paths_per_hit: 3
+  # Optional reliable chain walk: keep following strong narrative/evidence edges
+  # until path strength, confidence, or relation quality drops. top_k still
+  # controls how many final related memories are rendered.
+  chain_walk_enabled: false
+  chain_max_hops: 6
+  chain_min_strength: 0.2
+  chain_min_confidence: 0.72
+  chain_min_relation_priority: 60
+  chain_max_frontier: 24
+  chain_continue_relation_types:
+    - same_event
+    - context_of
+    - precedes
+    - previous_context
+    - next_context
+    - updates
+    - evidenced_by
+    - reflects_on
   relation_type_weights:
     same_event: 1.15
     context_of: 1.1
@@ -311,6 +329,10 @@ memory_diffusion:
     promises: 0.9
     belongs_to: 0.8
     emotional_echo: 0.95
+    next_context: 0.85
+    previous_context: 0.75
+    reflects_on: 0.8
+    evidenced_by: 1.0
     relates_to: 0.7
     contradicts: 0.45
     blocks: 0.45

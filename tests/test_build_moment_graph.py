@@ -1,4 +1,5 @@
 import asyncio
+import json
 from argparse import Namespace
 
 from bucket_manager import BucketManager
@@ -201,6 +202,7 @@ def test_run_once_writes_edges_and_incremental_idle(monkeypatch, test_config, tm
         )
     )
     monkeypatch.setattr(build_moment_graph, "load_config", lambda: test_config)
+    diagnostics_file = tmp_path / "moment-graph-diagnostics.jsonl"
     args = Namespace(
         incremental=False,
         write=True,
@@ -209,6 +211,8 @@ def test_run_once_writes_edges_and_incremental_idle(monkeypatch, test_config, tm
         min_score=0.58,
         max_edges_per_moment=2,
         max_moments=100,
+        diagnostics_file=str(diagnostics_file),
+        diagnostics_sample_limit=1,
     )
 
     result = asyncio.run(build_moment_graph.run_once(args))
@@ -217,9 +221,71 @@ def test_run_once_writes_edges_and_incremental_idle(monkeypatch, test_config, tm
     assert result["dry_run"] is False
     assert result["written_edge_count"] > 0
     assert result["indexed"]["buckets"] == 2
+    assert diagnostics_file.exists()
 
     idle_args = Namespace(**{**vars(args), "incremental": True})
     idle = asyncio.run(build_moment_graph.run_once(idle_args))
 
     assert idle["status"] == "idle"
     assert idle["changed_bucket_count"] == 0
+    assert idle["candidate_edge_count"] == 0
+
+    records = [json.loads(line) for line in diagnostics_file.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 2
+    assert records[0]["status"] == "ok"
+    assert records[0]["written_edge_count"] == result["written_edge_count"]
+    assert len(records[0]["sample_edges"]) <= 1
+    assert records[1]["status"] == "idle"
+    assert records[1]["candidate_edge_count"] == 0
+    assert records[1]["edge_fingerprint"] == records[0]["edge_fingerprint"]
+    assert records[1]["edge_fingerprint_changed"] is False
+
+
+def test_run_once_appends_dry_run_diagnostics(monkeypatch, test_config, tmp_path):
+    bucket_mgr = BucketManager(test_config)
+    asyncio.run(
+        bucket_mgr.create(
+            content="FF14 蓝色偏好是小雨稳定的界面线索。",
+            tags=["ff14", "blue_preference"],
+            domain=["game"],
+            name="蓝色偏好",
+        )
+    )
+    asyncio.run(
+        bucket_mgr.create(
+            content="FF14 蓝色界面后续：雨天安静主题继续用蓝色。",
+            tags=["ff14", "blue_preference"],
+            domain=["game"],
+            name="蓝色后续",
+        )
+    )
+    monkeypatch.setattr(build_moment_graph, "load_config", lambda: test_config)
+    diagnostics_file = tmp_path / "dry-run-diagnostics.jsonl"
+    args = Namespace(
+        incremental=False,
+        write=False,
+        force=True,
+        state_file=str(tmp_path / "moment-worker.json"),
+        min_score=0.58,
+        max_edges_per_moment=2,
+        max_moments=100,
+        diagnostics_file=str(diagnostics_file),
+        diagnostics_sample_limit=1,
+    )
+
+    result = asyncio.run(build_moment_graph.run_once(args))
+
+    assert result["status"] == "ok"
+    assert result["dry_run"] is True
+    assert result["candidate_edge_count"] > 0
+    assert result["written_edge_count"] == 0
+
+    records = [json.loads(line) for line in diagnostics_file.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 1
+    record = records[0]
+    assert record["dry_run"] is True
+    assert record["candidate_edge_count"] == result["candidate_edge_count"]
+    assert record["written_edge_count"] == 0
+    assert record["edge_fingerprint"]
+    assert record["diagnostics"]["candidate_after_cap"] == result["candidate_edge_count"]
+    assert len(record["sample_edges"]) <= 1

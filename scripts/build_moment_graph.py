@@ -86,9 +86,42 @@ class IndexedMoment:
     domains: set[str]
 
 
+@dataclass
+class GraphBuildStats:
+    indexed_moment_count: int = 0
+    direct_seed_count: int = 0
+    related_target_count: int = 0
+    skipped_source_gate: int = 0
+    skipped_same_bucket: int = 0
+    skipped_target_gate: int = 0
+    evaluated_pairs: int = 0
+    skipped_no_term_evidence: int = 0
+    skipped_below_min_score: int = 0
+    candidate_before_cap: int = 0
+    candidate_after_cap: int = 0
+    relation_counts: dict[str, int] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "indexed_moment_count": self.indexed_moment_count,
+            "direct_seed_count": self.direct_seed_count,
+            "related_target_count": self.related_target_count,
+            "skipped_source_gate": self.skipped_source_gate,
+            "skipped_same_bucket": self.skipped_same_bucket,
+            "skipped_target_gate": self.skipped_target_gate,
+            "evaluated_pairs": self.evaluated_pairs,
+            "skipped_no_term_evidence": self.skipped_no_term_evidence,
+            "skipped_below_min_score": self.skipped_below_min_score,
+            "candidate_before_cap": self.candidate_before_cap,
+            "candidate_after_cap": self.candidate_after_cap,
+            "relation_counts": dict(self.relation_counts or {}),
+        }
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     config = load_config()
     default_state = Path(config["state_dir"]) / DEFAULT_STATE_NAME
+    default_diagnostics = os.environ.get("OMBRE_MOMENT_GRAPH_DIAGNOSTICS", "")
     parser = argparse.ArgumentParser(
         description="Build local cross-bucket moment graph edges without blocking recall requests."
     )
@@ -99,6 +132,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-score", type=float, default=0.58)
     parser.add_argument("--max-edges-per-moment", type=int, default=3)
     parser.add_argument("--max-moments", type=int, default=2000)
+    parser.add_argument(
+        "--diagnostics-file",
+        default=default_diagnostics,
+        help="Append one JSONL observation record. Useful for dry-run timers.",
+    )
+    parser.add_argument("--diagnostics-sample-limit", type=int, default=5)
     return parser.parse_args(argv)
 
 
@@ -197,20 +236,57 @@ def build_cross_bucket_edges(
     max_edges_per_moment: int = 3,
     max_moments: int = 2000,
 ) -> list[dict[str, Any]]:
+    edges, _stats = build_cross_bucket_edges_with_stats(
+        moments,
+        options,
+        min_score=min_score,
+        max_edges_per_moment=max_edges_per_moment,
+        max_moments=max_moments,
+    )
+    return edges
+
+
+def build_cross_bucket_edges_with_stats(
+    moments: list[dict[str, Any]],
+    options: MemoryRelevanceOptions | None = None,
+    *,
+    min_score: float = 0.58,
+    max_edges_per_moment: int = 3,
+    max_moments: int = 2000,
+) -> tuple[list[dict[str, Any]], GraphBuildStats]:
     options = options or memory_relevance_options_from_config()
     indexed = index_moments(moments, options, max_moments=max_moments)
+    stats = GraphBuildStats(indexed_moment_count=len(indexed))
+    direct_allowed: dict[str, bool] = {}
+    related_allowed: dict[str, bool] = {}
+    for item in indexed:
+        moment_id = str(item.moment.get("moment_id") or "")
+        direct_allowed[moment_id] = can_moment_be_direct_seed(item.moment)
+        related_allowed[moment_id] = can_moment_be_related_target(item.moment)
+    stats.direct_seed_count = sum(1 for allowed in direct_allowed.values() if allowed)
+    stats.related_target_count = sum(1 for allowed in related_allowed.values() if allowed)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     outgoing: dict[str, list[tuple[float, dict[str, Any]]]] = {}
     for source in indexed:
-        if not can_moment_be_direct_seed(source.moment):
+        source_id = str(source.moment.get("moment_id") or "")
+        if not direct_allowed.get(source_id):
+            stats.skipped_source_gate += 1
             continue
         for target in indexed:
+            target_id = str(target.moment.get("moment_id") or "")
             if source.moment["bucket_id"] == target.moment["bucket_id"]:
+                stats.skipped_same_bucket += 1
                 continue
-            if not can_moment_be_related_target(target.moment):
+            if not related_allowed.get(target_id):
+                stats.skipped_target_gate += 1
                 continue
+            stats.evaluated_pairs += 1
             score, reason_bits = pair_score(source, target)
+            if not reason_bits:
+                stats.skipped_no_term_evidence += 1
+                continue
             if score < min_score:
+                stats.skipped_below_min_score += 1
                 continue
             edge = {
                 "source": source.moment["moment_id"],
@@ -224,10 +300,18 @@ def build_cross_bucket_edges(
             outgoing.setdefault(source.moment["moment_id"], []).append((score, edge))
 
     edges = []
+    stats.candidate_before_cap = sum(len(candidates) for candidates in outgoing.values())
     for candidates in outgoing.values():
         candidates.sort(key=lambda item: item[0], reverse=True)
         edges.extend(edge for _score, edge in candidates[: max(1, int(max_edges_per_moment))])
-    return dedupe_edges(edges)
+    edges = dedupe_edges(edges)
+    stats.candidate_after_cap = len(edges)
+    relation_counts: dict[str, int] = {}
+    for edge in edges:
+        relation_type = str(edge.get("relation_type") or "relates_to")
+        relation_counts[relation_type] = relation_counts.get(relation_type, 0) + 1
+    stats.relation_counts = relation_counts
+    return edges, stats
 
 
 def pair_score(source: IndexedMoment, target: IndexedMoment) -> tuple[float, list[str]]:
@@ -403,6 +487,68 @@ def dedupe_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(deduped.values())
 
 
+def edge_fingerprint(edges: list[dict[str, Any]]) -> str:
+    payload = [
+        {
+            "source": str(edge.get("source") or ""),
+            "target": str(edge.get("target") or ""),
+            "relation_type": str(edge.get("relation_type") or ""),
+            "confidence": round(float(edge.get("confidence") or 0.0), 3),
+            "reason": str(edge.get("reason") or ""),
+        }
+        for edge in edges or []
+    ]
+    raw = json.dumps(
+        sorted(payload, key=lambda item: (item["source"], item["target"], item["relation_type"])),
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def load_previous_diagnostic(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        last = ""
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                last = line
+        return json.loads(last) if last else None
+    except Exception:
+        return None
+
+
+def append_diagnostics(path: Path, result: dict[str, Any], edges: list[dict[str, Any]], sample_limit: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    previous = load_previous_diagnostic(path)
+    previous_fingerprint = str((previous or {}).get("edge_fingerprint") or "")
+    if result.get("status") == "idle":
+        fingerprint = previous_fingerprint
+        fingerprint_changed = False
+    else:
+        fingerprint = edge_fingerprint(edges)
+        fingerprint_changed = bool(previous_fingerprint and previous_fingerprint != fingerprint)
+    sample_limit = max(0, int(sample_limit))
+    record = {
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "status": result.get("status"),
+        "dry_run": result.get("dry_run"),
+        "bucket_count": result.get("bucket_count"),
+        "changed_bucket_count": result.get("changed_bucket_count"),
+        "candidate_edge_count": result.get("candidate_edge_count", 0),
+        "written_edge_count": result.get("written_edge_count", 0),
+        "state_file": result.get("state_file", ""),
+        "edge_fingerprint": fingerprint,
+        "previous_edge_fingerprint": previous_fingerprint,
+        "edge_fingerprint_changed": fingerprint_changed,
+        "diagnostics": result.get("diagnostics", {}),
+        "sample_edges": edges[:sample_limit],
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 async def run_once(args: argparse.Namespace) -> dict[str, Any]:
     config = load_config()
     bucket_mgr = BucketManager(config)
@@ -412,13 +558,20 @@ async def run_once(args: argparse.Namespace) -> dict[str, Any]:
     state = load_state(state_path)
     changed = changed_bucket_ids(buckets, state)
     if args.incremental and not changed and not args.force:
-        return {
+        result = {
             "status": "idle",
             "dry_run": not args.write,
             "bucket_count": len(buckets),
             "changed_bucket_count": 0,
+            "candidate_edge_count": 0,
+            "written_edge_count": 0,
             "state_file": str(state_path),
+            "diagnostics": GraphBuildStats().as_dict(),
         }
+        diagnostics_file = str(getattr(args, "diagnostics_file", "") or "").strip()
+        if diagnostics_file:
+            append_diagnostics(Path(diagnostics_file), result, [], int(getattr(args, "diagnostics_sample_limit", 5)))
+        return result
 
     if args.write:
         indexed = store.bulk_upsert(buckets)
@@ -427,7 +580,7 @@ async def run_once(args: argparse.Namespace) -> dict[str, Any]:
         indexed = {"buckets": 0, "moments": 0}
         moments = parse_moments_for_dry_run(store, buckets)
 
-    edges = build_cross_bucket_edges(
+    edges, stats = build_cross_bucket_edges_with_stats(
         moments,
         store.relevance_options,
         min_score=float(args.min_score),
@@ -439,7 +592,7 @@ async def run_once(args: argparse.Namespace) -> dict[str, Any]:
         written = store.replace_generated_edges(edges, reason_prefix=GENERATED_REASON_PREFIX)
         save_state(state_path, state_for_buckets(buckets))
 
-    return {
+    result = {
         "status": "ok",
         "dry_run": not args.write,
         "bucket_count": len(buckets),
@@ -448,8 +601,18 @@ async def run_once(args: argparse.Namespace) -> dict[str, Any]:
         "candidate_edge_count": len(edges),
         "written_edge_count": written,
         "state_file": str(state_path),
+        "diagnostics": stats.as_dict(),
         "sample_edges": edges[:10],
     }
+    diagnostics_file = str(getattr(args, "diagnostics_file", "") or "").strip()
+    if diagnostics_file:
+        append_diagnostics(
+            Path(diagnostics_file),
+            result,
+            edges,
+            int(getattr(args, "diagnostics_sample_limit", 5)),
+        )
+    return result
 
 
 def print_result(result: dict[str, Any]) -> None:

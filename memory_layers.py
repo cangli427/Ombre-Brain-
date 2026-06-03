@@ -113,6 +113,13 @@ LAYER_ALIASES = {
     "commitment": WRITE_LAYER_RELATIONSHIP_LESSON,
 }
 
+WRITER_RUNTIME_LAYERS = {
+    WRITE_LAYER_STABLE_BOUNDARY: LAYER_ANCHOR,
+    WRITE_LAYER_RELATIONSHIP_LESSON: LAYER_ANCHOR,
+    WRITE_LAYER_SHORT_STATE: LAYER_DYNAMIC,
+    WRITE_LAYER_PROCESS_EVENT: LAYER_DYNAMIC,
+}
+
 
 @dataclass(frozen=True)
 class MemoryLayerPolicy:
@@ -222,6 +229,20 @@ def policy_for_layer(layer: str) -> MemoryLayerPolicy:
     return LAYER_POLICIES.get(str(layer or ""), LAYER_POLICIES[LAYER_DYNAMIC])
 
 
+def runtime_layer_from_write_classification(memory_layer: object, memory_subject: object = "") -> str:
+    layer = normalize_write_layer(memory_layer)
+    if layer == WRITE_LAYER_RELATIONSHIP_LESSON:
+        return LAYER_ANCHOR
+    if layer == WRITE_LAYER_STABLE_BOUNDARY:
+        return LAYER_ANCHOR
+    if layer in WRITER_RUNTIME_LAYERS:
+        return WRITER_RUNTIME_LAYERS[layer]
+    subject = normalize_write_subject(memory_subject)
+    if subject == WRITE_SUBJECT_RELATIONSHIP and layer:
+        return LAYER_ANCHOR
+    return ""
+
+
 def infer_bucket_layer(bucket: dict[str, Any] | None) -> str:
     bucket = bucket if isinstance(bucket, dict) else {}
     meta = _metadata(bucket)
@@ -246,6 +267,12 @@ def infer_bucket_layer(bucket: dict[str, Any] | None) -> str:
         return LAYER_FAVORITE
     if bucket_type == "feel":
         return LAYER_AFFECT_CONTEXT
+    writer_layer = runtime_layer_from_write_classification(
+        meta.get("memory_layer") or meta.get("bucket_memory_layer"),
+        meta.get("memory_subject") or meta.get("bucket_memory_subject"),
+    )
+    if writer_layer:
+        return writer_layer
     return LAYER_DYNAMIC
 
 
@@ -310,6 +337,13 @@ def can_moment_be_related_target(moment: dict[str, Any] | None, *, explicit_look
     if policy.layer in {LAYER_DREAM, LAYER_SOURCE_RECORD, LAYER_RELATIONSHIP_WEATHER, LAYER_AFFECT_CONTEXT}:
         return False
     return policy.can_diffuse
+
+
+def can_bucket_be_recent_context(bucket: dict[str, Any] | None, *, explicit_lookup: bool = False) -> bool:
+    layer = infer_bucket_layer(bucket)
+    if explicit_lookup:
+        return layer in {LAYER_ANCHOR, LAYER_DYNAMIC, LAYER_FAVORITE}
+    return layer == LAYER_DYNAMIC
 
 
 def is_context_only_section(section: object) -> bool:

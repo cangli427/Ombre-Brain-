@@ -85,6 +85,24 @@ def test_moments_store_summary_facets_and_evidence_spans(test_config):
     assert any(span["facet"] == "relationship_identity" for span in meta["evidence_spans"])
 
 
+def test_moment_metadata_preserves_writer_classification(test_config):
+    store = MemoryMomentStore(test_config)
+    bucket = _bucket(
+        "writer-layer",
+        "Haven 以后要先接住小雨的情绪。",
+        memory_subject="relationship",
+        memory_layer="relationship_lesson",
+        memory_classification_source="model",
+    )
+
+    moments = store.upsert_bucket(bucket)
+    meta = moments[0]["metadata"]
+
+    assert meta["bucket_memory_subject"] == "relationship"
+    assert meta["bucket_memory_layer"] == "relationship_lesson"
+    assert meta["bucket_memory_classification_source"] == "model"
+
+
 def test_structured_bucket_splits_known_sections_and_preserves_unknown_blocks():
     bucket = _bucket(
         "structured",

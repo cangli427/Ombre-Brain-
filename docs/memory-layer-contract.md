@@ -68,6 +68,8 @@ memory_classification_source: model | model_adjusted | rule | default
 
 This first pass answers what the writer thought the memory was. Runtime recall may still apply stricter layer policy from bucket type, tags, pinned/protected, archive state, and context-only sections.
 
+Runtime uses the writer pass as a hint only after stronger storage signals have been checked. `stable_boundary` and `relationship_lesson` use long-term anchor policy unless the bucket is manually pinned/protected/favorited/archived. `short_state` and `process_event` use dynamic memory policy.
+
 Examples:
 
 - "I dislike being lectured." Long-term user boundary. It may become core or anchor if repeated or central.
@@ -108,6 +110,7 @@ The runtime answers "which layer is this?" with `memory_layers.py`, then applies
 - Direct seed gate: only admitted bucket body/title moments can prove a direct recall. Dream resonance, source records, relationship weather, and context-only sections cannot.
 - Recall context gate: comments, affect anchors, and favorite reasons may stay indexed as context for their parent bucket, so they can appear beside a reliable direct hit.
 - Related target gate: diffused memory must be summary-only and must pass the target layer policy. Archive/resolved/digested buckets stay hidden in normal related recall, but can return as old-memory summary when the query explicitly asks for old, archived, conflict, or resolved material.
+- Recent context gate: automatic `Recent Context` only uses dynamic memory. Writer-classified stable boundaries and relationship lessons do not appear just because they were written recently; they can still appear when directly recalled or when the user explicitly asks for recent memory.
 
 This separation is important. A moment can be searchable context without being allowed to prove the current topic.
 

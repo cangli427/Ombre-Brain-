@@ -16,6 +16,7 @@ from memory_layers import (
     RENDER_DIRECT_AUTO,
     RENDER_FAVORITE,
     RENDER_WEATHER,
+    can_bucket_be_recent_context,
     can_bucket_be_related_target,
     can_bucket_diffuse,
     can_moment_be_direct_seed,
@@ -27,6 +28,7 @@ from memory_layers import (
     normalize_write_classification,
     policy_for_bucket,
     policy_for_moment,
+    runtime_layer_from_write_classification,
 )
 
 
@@ -64,6 +66,43 @@ def test_anchor_layer_is_distinct_from_normal_dynamic_memory():
     assert infer_bucket_layer(bucket) == LAYER_ANCHOR
     assert policy_for_bucket(bucket).render_policy == RENDER_DIRECT_AUTO
     assert can_bucket_diffuse(bucket) is True
+
+
+def test_writer_classification_maps_stable_and_relationship_to_anchor_policy():
+    stable = _bucket(type="dynamic", memory_subject="user", memory_layer="stable_boundary")
+    lesson = _bucket(type="dynamic", memory_subject="relationship", memory_layer="relationship_lesson")
+    state = _bucket(type="dynamic", memory_subject="user", memory_layer="short_state")
+    event = _bucket(type="dynamic", memory_subject="event", memory_layer="process_event")
+
+    assert runtime_layer_from_write_classification("stable_boundary", "user") == LAYER_ANCHOR
+    assert runtime_layer_from_write_classification("relationship_lesson", "relationship") == LAYER_ANCHOR
+    assert infer_bucket_layer(stable) == LAYER_ANCHOR
+    assert infer_bucket_layer(lesson) == LAYER_ANCHOR
+    assert infer_bucket_layer(state) == LAYER_DYNAMIC
+    assert infer_bucket_layer(event) == LAYER_DYNAMIC
+    assert can_bucket_be_recent_context(stable) is False
+    assert can_bucket_be_recent_context(lesson) is False
+    assert can_bucket_be_recent_context(state) is True
+    assert can_bucket_be_recent_context(event) is True
+    assert can_bucket_be_recent_context(stable, explicit_lookup=True) is True
+
+
+def test_manual_favorite_and_core_signals_override_writer_classification():
+    favorite = _bucket(
+        type="dynamic",
+        tags=["haven_favorite"],
+        memory_subject="user",
+        memory_layer="stable_boundary",
+    )
+    pinned = _bucket(
+        type="dynamic",
+        pinned=True,
+        memory_subject="event",
+        memory_layer="process_event",
+    )
+
+    assert infer_bucket_layer(favorite) == LAYER_FAVORITE
+    assert infer_bucket_layer(pinned) == LAYER_CORE
 
 
 def test_relationship_weather_never_becomes_direct_seed_or_diffusion_source():
@@ -104,6 +143,27 @@ def test_context_only_sections_override_bucket_layer():
 
     assert is_context_only_section("affect_anchor") is True
     assert is_context_only_section("body") is False
+
+
+def test_moment_layer_uses_bucket_writer_classification_metadata():
+    body = _moment(
+        "body",
+        bucket_type="dynamic",
+        bucket_memory_subject="relationship",
+        bucket_memory_layer="relationship_lesson",
+    )
+    context = _moment(
+        "affect_anchor",
+        bucket_type="dynamic",
+        bucket_memory_subject="relationship",
+        bucket_memory_layer="relationship_lesson",
+    )
+
+    assert infer_moment_layer(body) == LAYER_ANCHOR
+    assert can_moment_be_direct_seed(body) is True
+    assert infer_moment_layer(context) == LAYER_AFFECT_CONTEXT
+    assert can_moment_be_recall_context(context) is True
+    assert can_moment_be_direct_seed(context) is False
 
 
 def test_favorite_layer_uses_separate_policy_but_content_can_still_seed():

@@ -198,6 +198,7 @@ def _create_bucket(
     pinned: bool = False,
     protected: bool = False,
     resolved: bool = False,
+    **extra_meta,
 ) -> str:
     bucket_id = _run(
         bucket_mgr.create(
@@ -213,7 +214,7 @@ def _create_bucket(
             protected=protected,
         )
     )
-    _set_bucket_times(bucket_mgr, bucket_id, hours_ago=hours_ago, resolved=resolved)
+    _set_bucket_times(bucket_mgr, bucket_id, hours_ago=hours_ago, resolved=resolved, **extra_meta)
     return bucket_id
 
 
@@ -2803,6 +2804,62 @@ def test_gateway_recent_context_filters_short_chinese_topic_query(
     assert "Recent Context" in injected
     assert "少女暴君与成男艳后" in injected
     assert "Haven的梦键盘花园求婚" not in injected
+
+
+def test_gateway_recent_context_uses_writer_layer_gate(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=800,
+        recalled_memory_budget=0,
+        related_memory_budget=0,
+        inject_total_budget=1800,
+        current_inner_state_interval_rounds=0,
+        relationship_weather_interval_rounds=0,
+        favorite_memory_interval_rounds=0,
+    )
+    _create_bucket(
+        bucket_mgr,
+        content="头疼边界：小雨头疼时不喜欢被说教。",
+        name="头疼稳定边界",
+        hours_ago=1,
+        importance=10,
+        domain=["身心"],
+        memory_subject="user",
+        memory_layer="stable_boundary",
+    )
+    _create_bucket(
+        bucket_mgr,
+        content="今日状态：小雨今天头疼，需要轻一点接话。",
+        name="今日头疼状态",
+        hours_ago=1,
+        importance=9,
+        domain=["身心"],
+        memory_subject="user",
+        memory_layer="short_state",
+    )
+
+    app, _, _, captured = _build_service(monkeypatch, cfg, bucket_mgr)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer gateway-secret",
+                "X-Ombre-Session-Id": "sess-recent-writer-layer",
+            },
+            json={"messages": [{"role": "user", "content": "头疼"}]},
+        )
+
+    assert response.status_code == 200
+    injected = _joined_message_content(captured[0]["json"]["messages"])
+    assert "Recent Context" in injected
+    assert "今日头疼状态" in injected
+    assert "头疼稳定边界" not in injected
 
 
 def test_gateway_recent_context_skips_active_ordinary_message_without_reliable_recall(

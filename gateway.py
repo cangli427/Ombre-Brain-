@@ -45,6 +45,7 @@ from memory_relevance import (
 )
 from memory_layers import (
     CONTEXT_ONLY_SECTIONS,
+    can_bucket_be_recent_context,
     can_bucket_be_related_target,
     can_moment_be_direct_seed,
     can_moment_be_recall_context,
@@ -2144,11 +2145,10 @@ class GatewayService:
             and not self._query_wants_body_chain(query_text)
         )
         recent_buckets = []
+        explicit_recent_query = self._query_requests_recent_context(query_text)
         for bucket in all_buckets:
             meta = bucket.get("metadata", {})
-            if meta.get("type") == "feel":
-                continue
-            if meta.get("pinned") or meta.get("protected"):
+            if not can_bucket_be_recent_context(bucket, explicit_lookup=explicit_recent_query):
                 continue
             if enforce_topic and not self._bucket_has_query_topic_evidence(query_text, bucket):
                 continue

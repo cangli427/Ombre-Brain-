@@ -91,7 +91,8 @@ from memory_relevance import (
     relevance_decision,
     relevance_multiplier,
 )
-from recall_policy import CONTEXT_ONLY_SECTIONS, RecallPolicy
+from memory_layers import CONTEXT_ONLY_SECTIONS, is_context_only_section
+from recall_policy import RecallPolicy
 from memory_write_gate import MemoryWriteGate, WriteGateDecision
 from memory_nodes import MemoryNodeStore
 from persona_engine import PersonaStateEngine
@@ -1739,7 +1740,7 @@ def _recallable_moments(moments: list[dict]) -> list[dict]:
 def _direct_recallable_moments(moments: list[dict]) -> list[dict]:
     return [
         moment for moment in _recallable_moments(moments)
-        if moment.get("section") not in MOMENT_TEMPERATURE_SECTIONS
+        if not is_context_only_section(moment.get("section"))
     ]
 
 

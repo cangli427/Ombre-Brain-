@@ -43,7 +43,8 @@ from memory_relevance import (
     recall_search_query,
     relevance_multiplier,
 )
-from recall_policy import CONTEXT_ONLY_SECTIONS, RecallPolicy
+from memory_layers import CONTEXT_ONLY_SECTIONS, is_context_only_section
+from recall_policy import RecallPolicy
 from memory_nodes import MemoryNodeStore
 from persona_engine import PersonaStateEngine
 from reranker_engine import RerankerEngine
@@ -2408,7 +2409,7 @@ class GatewayService:
         return self._representative_moment(
             [
                 moment for moment in self._recallable_moments(moments)
-                if moment.get("section") not in MOMENT_TEMPERATURE_SECTIONS
+                if not is_context_only_section(moment.get("section"))
             ]
         )
 

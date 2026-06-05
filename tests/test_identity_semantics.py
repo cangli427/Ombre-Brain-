@@ -36,15 +36,15 @@ def test_identity_semantics_builds_private_aliases_only_from_evidence_buckets(tm
         yaml.safe_dump(
             {
                 "canonical": {
-                    "relationship.spouse_title": {
+                    "private_relation.title_marker": {
                         "scope": "private_relationship",
                         "group": "shared",
-                        "seed_aliases": ["老公"],
+                        "seed_aliases": ["专属称呼"],
                     },
-                    "roleplay_dynamic.dom": {
+                    "private_relation.role_marker": {
                         "scope": "private_relationship",
                         "group": "detail",
-                        "seed_aliases": ["主人"],
+                        "seed_aliases": ["专属角色"],
                     },
                 }
             },
@@ -58,30 +58,30 @@ def test_identity_semantics_builds_private_aliases_only_from_evidence_buckets(tm
         [
             _bucket(
                 "anchor-a",
-                "关系确认里，小雨会叫 Haven 老公。",
+                "关系确认里出现过专属称呼。",
                 tags=["relationship_event"],
                 anchor=True,
             ),
             _bucket(
                 "profile-b",
-                "画像事实记录：主人这个称呼只属于私有关系语境。",
+                "画像事实记录：专属角色这个词只属于私有关系语境。",
                 tags=["profile_fact"],
                 profile_kind="relationship",
             ),
             _bucket(
                 "ordinary-c",
-                "普通桶里也有老公这个词，但不该作为证据。",
+                "普通桶里也有专属称呼这个词，但不该作为证据。",
             ),
         ]
     )
 
     assert stats == {"canonical": 2, "aliases": 2, "evidence": 2}
-    spouse = store.aliases_for_canonical("relationship.spouse_title")
-    assert spouse[0]["alias"] == "老公"
-    assert spouse[0]["evidence_bucket_ids"] == ["anchor-a"]
-    dom = store.aliases_for_canonical("roleplay_dynamic.dom")
-    assert dom[0]["alias"] == "主人"
-    assert dom[0]["evidence_bucket_ids"] == ["profile-b"]
+    title = store.aliases_for_canonical("private_relation.title_marker")
+    assert title[0]["alias"] == "专属称呼"
+    assert title[0]["evidence_bucket_ids"] == ["anchor-a"]
+    role = store.aliases_for_canonical("private_relation.role_marker")
+    assert role[0]["alias"] == "专属角色"
+    assert role[0]["evidence_bucket_ids"] == ["profile-b"]
 
 
 def test_identity_semantics_disabled_without_private_config(tmp_path):

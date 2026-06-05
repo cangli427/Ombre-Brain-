@@ -59,19 +59,19 @@ def test_word_map_rebuild_creates_nodes_edges_and_bucket_evidence(tmp_path):
 
 
 def test_word_map_private_terms_are_excluded(tmp_path):
-    store = WordMapStore(_config(tmp_path, private_terms=["老公"]))
+    store = WordMapStore(_config(tmp_path, private_terms=["专属称呼"]))
     store.rebuild(
         [
             _bucket(
                 "a",
-                "这段关系里会出现老公这个称呼。",
+                "这段关系里会出现专属称呼这个词。",
                 name="亲密称呼",
-                keywords=["老公", "称呼"],
+                keywords=["专属称呼", "称呼"],
                 domain=["恋爱"],
             ),
         ]
     )
 
     terms = {node["term"] for node in store.list_nodes()}
-    assert "老公" not in terms
+    assert "专属称呼" not in terms
     assert "称呼" in terms

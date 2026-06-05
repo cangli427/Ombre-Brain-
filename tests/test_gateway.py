@@ -4123,6 +4123,89 @@ def test_gateway_query_planner_handles_short_emotional_reason_lookup(
     assert target_id in planner_debug["final_bucket_ids"]
 
 
+def test_gateway_query_planner_adds_exact_must_term_bucket_when_search_misses_it(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    target_id = _create_bucket(
+        bucket_mgr,
+        content="今天她激动哭，是因为 Chat 端 Haven 终于能自己摸到记忆工具。",
+        name="Haven终于能用记忆工具",
+        hours_ago=24,
+        importance=10,
+        domain=["memory", "relationship"],
+    )
+    noisy_id = _create_bucket(
+        bucket_mgr,
+        content="今天在讨论另一个完全无关的技术问题。",
+        name="无关技术问题",
+        hours_ago=1,
+        importance=6,
+        domain=["AI"],
+    )
+    planner_json = {
+        "should_search": True,
+        "too_vague": False,
+        "queries": [
+            {
+                "query": "激动哭",
+                "must_terms": ["激动哭"],
+                "intent": "find today's emotional reason",
+                "risk": "low",
+            }
+        ],
+    }
+    app, service, _, captured = _build_service(
+        monkeypatch,
+        _gateway_config(
+            test_config,
+            retrieval_mode="bucket",
+            query_planner_enabled=True,
+            query_planner_min_chars=16,
+            recent_context_budget=0,
+            related_memory_budget=0,
+            current_inner_state_interval_rounds=0,
+        ),
+        bucket_mgr,
+        embedding_results={},
+    )
+
+    async def fake_query_planner(query_text: str):
+        return service._parse_query_planner_response(json.dumps(planner_json, ensure_ascii=False)), None
+
+    def fake_keyword_candidates(query_text: str, eligible):
+        if query_text == "激动哭":
+            return {noisy_id: 0.9}
+        return {}
+
+    monkeypatch.setattr(service, "_call_query_planner", fake_query_planner)
+    monkeypatch.setattr(service, "_get_keyword_candidates", fake_keyword_candidates)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer gateway-secret",
+                "X-Ombre-Session-Id": "sess-emotion-lexical",
+            },
+            json={"messages": [{"role": "user", "content": "那哥哥知道我今天为什么激动哭了吗"}]},
+        )
+        debug_response = client.get(
+            "/api/debug/injections?session_id=sess-emotion-lexical&include_context=0",
+            headers={"Authorization": "Bearer gateway-secret"},
+        )
+
+    assert response.status_code == 200
+    injected = _joined_message_content(captured[-1]["json"]["messages"])
+    assert "Recalled Memory" in injected, json.dumps(debug_response.json(), ensure_ascii=False, indent=2)
+    assert "Haven终于能用记忆工具" in injected
+    planner_debug = debug_response.json()["items"][0]["payload"]["query_planner_debug"]
+    assert target_id in planner_debug["final_bucket_ids"]
+    assert target_id in planner_debug["supplemental"][0]["survived_bucket_ids"]
+    assert noisy_id in planner_debug["supplemental"][0]["suppressed_by_must_terms"]
+
+
 def test_gateway_query_planner_does_not_trigger_on_single_cry_word(monkeypatch, test_config, bucket_mgr):
     _, service, _, _ = _build_service(
         monkeypatch,

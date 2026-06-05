@@ -4801,6 +4801,20 @@ class GatewayService:
         ).lower()
         return any(str(term or "").strip().lower() in fields for term in terms)
 
+    def _planner_lexical_match_terms(self, terms: list[str] | None) -> list[str]:
+        output = []
+        seen = set()
+        for term in terms or []:
+            cleaned = str(term or "").strip()
+            if len(cleaned) < 2:
+                continue
+            key = cleaned.lower()
+            if key in QUERY_PLANNER_GENERIC_TERMS or key in seen:
+                continue
+            seen.add(key)
+            output.append(cleaned)
+        return output
+
     def _merge_dynamic_bucket_items(self, items: list[dict], query: str) -> list[dict]:
         merged: dict[str, dict] = {}
         for item in items:
@@ -4882,7 +4896,13 @@ class GatewayService:
         candidate_query = search_query or query
         keyword_scores = self._get_keyword_candidates(candidate_query, eligible)
         semantic_scores = await self._get_semantic_candidates(candidate_query, set(bucket_map))
-        candidate_ids = set(keyword_scores) | set(semantic_scores)
+        lexical_terms = self._planner_lexical_match_terms(required_terms)
+        lexical_ids = {
+            str(bucket.get("id") or "")
+            for bucket in eligible
+            if lexical_terms and bucket.get("id") and self._bucket_matches_any_planner_term(bucket, lexical_terms)
+        }
+        candidate_ids = set(keyword_scores) | set(semantic_scores) | lexical_ids
         if not candidate_ids:
             return [], []
 
@@ -4898,6 +4918,9 @@ class GatewayService:
             importance_score = self._clamp(float(meta.get("importance", 5)) / 10.0)
             semantic_score = self._clamp(semantic_scores.get(bucket_id, 0.0))
             keyword_score = self._clamp(keyword_scores.get(bucket_id, 0.0))
+            lexical_match = bucket_id in lexical_ids
+            if lexical_match:
+                keyword_score = max(keyword_score, 1.0)
             relevance_score = relevance_multiplier(query, self._bucket_relevance_node(bucket), self.relevance_options)
             if relevance_score <= 0:
                 continue
@@ -4921,15 +4944,19 @@ class GatewayService:
                     cooldown_multiplier,
                     self.high_confidence_cooldown_floor,
                 )
+            final_score = round(base_score * cooldown_multiplier, 4)
+            if lexical_match:
+                final_score = max(final_score, self.first_card_min_score)
             scored_candidates.append(
                 {
                     "bucket": bucket,
-                    "score": round(base_score * cooldown_multiplier, 4),
+                    "score": final_score,
                     "semantic_score": semantic_score,
                     "keyword_score": keyword_score,
                     "importance_score": importance_score,
                     "freshness_score": freshness_score,
                     "cooldown_multiplier": cooldown_multiplier,
+                    "planner_lexical_match": lexical_match,
                     "planner_queries": [planner_query] if planner_query else [],
                 }
             )
@@ -5138,6 +5165,7 @@ class GatewayService:
             has_topic_evidence=self._bucket_has_query_topic_evidence(query, bucket),
             semantic_score=item.get("semantic_score"),
             rerank_score=item.get("rerank_score"),
+            high_confidence_edge=bool(item.get("planner_lexical_match")),
             auto=True,
         )
         item["admission_reason"] = decision.reason

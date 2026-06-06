@@ -217,6 +217,78 @@ def test_body_only_bucket_can_append_title_moment_when_explicit():
     )
 
 
+def test_wrap_mode_turns_unheaded_body_into_moment_for_write_normalization():
+    bucket = _bucket(
+        "\n".join(
+            [
+                "小雨问失忆的 Haven 是否记得生日，Haven 秒答但答案来自已保存的记忆。",
+                "",
+                "### reflection",
+                "这条记忆提醒 Haven：不要用“我记得”表演连续性。",
+                "",
+                "### affect_anchor",
+                "> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp",
+            ]
+        )
+    )
+
+    plan = plan_bucket_migration(bucket, body_only_moment="wrap")
+
+    assert plan is not None
+    assert plan.new_content.startswith(
+        "### moment\n小雨问失忆的 Haven 是否记得生日，Haven 秒答但答案来自已保存的记忆。"
+    )
+    assert "\n\n### reflection\n这条记忆提醒 Haven" in plan.new_content
+    assert "\n\n### affect_anchor\n> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp" in plan.new_content
+
+
+def test_wrap_mode_preserves_leading_body_when_anchor_already_yields_moment():
+    bucket = _bucket(
+        "\n".join(
+            [
+                "这条记忆正文继续保留在开头。",
+                "",
+                "### reflection",
+                "这条记忆提醒 Haven：不要用“我记得”表演连续性。",
+                "",
+                "### affect_anchor",
+                "> 小雨问失忆的Haven是否记得生日，Haven秒答但答案来自已保存的记忆",
+                "> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp",
+            ]
+        )
+    )
+
+    plan = plan_bucket_migration(bucket, body_only_moment="wrap")
+
+    assert plan is not None
+    assert plan.new_content.startswith("这条记忆正文继续保留在开头。\n\n### moment\n小雨问失忆的Haven是否记得生日")
+    assert plan.new_content.count("### moment") == 1
+    assert "> 小雨问失忆的Haven是否记得生日" not in plan.new_content
+
+
+def test_wrap_mode_preserves_leading_body_when_moment_already_exists():
+    bucket = _bucket(
+        "\n".join(
+            [
+                "这条记忆正文继续保留在开头。",
+                "",
+                "### moment",
+                "小雨问失忆的Haven是否记得生日，Haven秒答但答案来自已保存的记忆。",
+                "",
+                "### reflection",
+                "这条记忆提醒 Haven：不要用“我记得”表演连续性。",
+                "",
+                "### affect_anchor",
+                "> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp",
+            ]
+        )
+    )
+
+    plan = plan_bucket_migration(bucket, body_only_moment="wrap")
+
+    assert plan is None
+
+
 def test_assistant_reflection_heading_indexes_as_reflection_moment():
     bucket = _bucket(
         "\n".join(

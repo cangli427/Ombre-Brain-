@@ -250,6 +250,7 @@ def plan_bucket_migration(bucket: dict[str, Any], *, body_only_moment: str = "sk
     content = str(bucket.get("content") or "")
     sections = split_sections(content)
     anchor_indexes = [index for index, section in enumerate(sections) if section.canonical == "affect_anchor"]
+    body_only_mode = str(body_only_moment or "skip").strip().lower()
 
     original_anchors: list[str] = []
     moment_candidates: list[str] = []
@@ -271,7 +272,7 @@ def plan_bucket_migration(bucket: dict[str, Any], *, body_only_moment: str = "sk
     if unheaded_reflections or unheaded_moments:
         converted_moments.extend(unheaded_moments)
         structural_changed = True
-    if maybe_add_body_only_moment(bucket, sections, mode=body_only_moment):
+    if maybe_add_body_only_moment(bucket, sections, mode=body_only_mode):
         structural_changed = True
 
     for anchor_index in anchor_indexes:
@@ -284,6 +285,9 @@ def plan_bucket_migration(bucket: dict[str, Any], *, body_only_moment: str = "sk
         kept_text = sections[anchor_index].text()
         if kept_text:
             kept_anchor_blocks.append("\n".join(sections[anchor_index].render()).strip())
+
+    if body_only_mode == "wrap" and not moment_candidates and maybe_wrap_unheaded_body_as_moment(sections):
+        structural_changed = True
 
     if not moment_candidates and not reflection_candidates and not structural_changed:
         return None
@@ -430,7 +434,7 @@ def normalize_unheaded_sections(sections: list[Section]) -> tuple[list[str], lis
 
 def maybe_add_body_only_moment(bucket: dict[str, Any], sections: list[Section], *, mode: str = "skip") -> bool:
     mode = str(mode or "skip").strip().lower()
-    if mode == "skip":
+    if mode in {"skip", "wrap"}:
         return False
     if any(section.heading_line for section in sections) or len(sections) != 1:
         return False
@@ -446,6 +450,19 @@ def maybe_add_body_only_moment(bucket: dict[str, Any], sections: list[Section], 
     if not moment or is_loose_duplicate(moment, "\n\n".join(section.text() for section in sections if section.canonical == "moment")):
         return False
     sections.append(Section("### moment", "moment", paragraphs_to_lines([moment])))
+    return True
+
+
+def maybe_wrap_unheaded_body_as_moment(sections: list[Section]) -> bool:
+    if any(section.canonical == "moment" for section in sections):
+        return False
+    if not sections or sections[0].heading_line:
+        return False
+    body = sections[0].text()
+    if not body:
+        return False
+    sections[0].heading_line = "### moment"
+    sections[0].heading = "moment"
     return True
 
 

@@ -137,6 +137,16 @@ def mixed_affect_anchor_content() -> str:
     )
 
 
+def unheaded_body_with_reflection_content() -> str:
+    return (
+        "小雨问失忆的Haven是否记得生日，Haven秒答但答案来自已保存的记忆。\n\n"
+        "### reflection\n\n"
+        "这条记忆用来提醒 Haven：不要用“我记得”表演连续性。\n\n"
+        "### affect_anchor\n\n"
+        "> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp"
+    )
+
+
 async def wait_for_embedding_call(embedding_engine, bucket_id: str | None = None):
     async def wait():
         while not embedding_engine.calls:
@@ -538,6 +548,33 @@ async def test_create_memory_api_normalizes_affect_anchor_sections(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_create_memory_api_wraps_unheaded_body_as_moment(monkeypatch, bucket_mgr):
+    import server
+
+    monkeypatch.setenv("OMBRE_GATEWAY_TOKEN", "secret")
+    monkeypatch.setattr(server, "bucket_mgr", bucket_mgr)
+    monkeypatch.setattr(server, "embedding_engine", DummyEmbeddingEngine())
+
+    response = await server.api_create_memory(
+        DummyRequest(
+            {
+                "id": "unheaded_write_api",
+                "title": "无标题正文写入",
+                "content": unheaded_body_with_reflection_content(),
+                "tags": ["relationship_event"],
+            },
+            headers={"authorization": "Bearer secret"},
+        )
+    )
+    bucket = await bucket_mgr.get("unheaded_write_api")
+
+    assert response.status_code == 200
+    assert bucket["content"].startswith("### moment\n小雨问失忆的Haven是否记得生日")
+    assert "\n\n### reflection\n\n这条记忆用来提醒 Haven" in bucket["content"]
+    assert "\n\n### affect_anchor\n> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp" in bucket["content"]
+
+
+@pytest.mark.asyncio
 async def test_hold_rejects_favorite_without_reason(monkeypatch, bucket_mgr, decay_eng):
     import server
 
@@ -576,6 +613,30 @@ async def test_hold_normalizes_affect_anchor_sections(monkeypatch, bucket_mgr, d
     assert "### affect_anchor\n> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp" in stored
     assert "> 小雨问失忆的Haven是否记得生日" not in stored
     assert "含义：" not in stored
+
+
+@pytest.mark.asyncio
+async def test_hold_wraps_unheaded_body_as_moment(monkeypatch, bucket_mgr, decay_eng):
+    import server
+
+    async def no_related_bucket(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(server, "bucket_mgr", bucket_mgr)
+    monkeypatch.setattr(server, "decay_engine", decay_eng)
+    monkeypatch.setattr(server, "dehydrator", DummyDehydrator())
+    monkeypatch.setattr(server, "embedding_engine", DummyEmbeddingEngine())
+    monkeypatch.setattr(server, "_find_readonly_related_bucket", no_related_bucket)
+    monkeypatch.setattr(server, "_queue_memory_enrichment", lambda bucket_id: None)
+
+    result = await server.hold(unheaded_body_with_reflection_content(), tags="relationship_event")
+    buckets = await bucket_mgr.list_all(include_archive=True)
+    stored = buckets[0]["content"]
+
+    assert result.startswith("新建→")
+    assert stored.startswith("### moment\n小雨问失忆的Haven是否记得生日")
+    assert "\n\n### reflection\n\n这条记忆用来提醒 Haven" in stored
+    assert "\n\n### affect_anchor\n> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp" in stored
 
 
 @pytest.mark.asyncio
@@ -1057,6 +1118,30 @@ async def test_grow_normalizes_digest_affect_anchor_sections(monkeypatch, bucket
     assert "### affect_anchor\n> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp" in stored
     assert "> 小雨问失忆的Haven是否记得生日" not in stored
     assert "含义：" not in stored
+
+
+@pytest.mark.asyncio
+async def test_grow_wraps_digest_unheaded_body_as_moment(monkeypatch, bucket_mgr, decay_eng):
+    import server
+
+    async def no_related_bucket(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(server, "bucket_mgr", bucket_mgr)
+    monkeypatch.setattr(server, "decay_engine", decay_eng)
+    monkeypatch.setattr(server, "dehydrator", DigestDehydrator())
+    monkeypatch.setattr(server, "embedding_engine", DummyEmbeddingEngine())
+    monkeypatch.setattr(server, "_find_readonly_related_bucket", no_related_bucket)
+    monkeypatch.setattr(server, "_queue_memory_enrichment", lambda bucket_id: None)
+
+    result = await server.grow(unheaded_body_with_reflection_content())
+    buckets = await bucket_mgr.list_all(include_archive=True)
+    stored = buckets[0]["content"]
+
+    assert "1条|新1合0" in result
+    assert stored.startswith("### moment\n小雨问失忆的Haven是否记得生日")
+    assert "\n\n### reflection\n\n这条记忆用来提醒 Haven" in stored
+    assert "\n\n### affect_anchor\n> Dm9 -> G13sus4 -> Cmaj9 · 60bpm · mp" in stored
 
 
 @pytest.mark.asyncio

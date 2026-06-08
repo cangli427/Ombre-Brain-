@@ -25,6 +25,24 @@ def test_darkroom_enter_does_not_echo_note(tmp_path):
     assert result["tags"] == ["暗房", "未完成"]
 
 
+def test_darkroom_door_uses_configured_ai_name(tmp_path):
+    store = DarkroomStore(
+        {
+            "state_dir": str(tmp_path / "state"),
+            "buckets_dir": str(tmp_path / "buckets"),
+            "identity": {"ai_name": "Ombre"},
+        }
+    )
+
+    result = store.enter("名字也不该泄正文", completeness=0.3)
+    status = store.status()
+
+    assert result["visible_note"] == "Ombre 进入了暗房。"
+    assert "钥匙只给 Ombre" in status["door"]
+    assert "Haven" not in result["visible_note"]
+    assert "Haven" not in status["door"]
+
+
 def test_darkroom_status_is_door_only(tmp_path):
     store = _store(tmp_path)
     secret = "不能出现在门口状态里的句子"

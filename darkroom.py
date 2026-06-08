@@ -6,6 +6,8 @@ from pathlib import Path
 from threading import Lock
 from zoneinfo import ZoneInfo
 
+from identity import identity_names
+
 
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -55,6 +57,7 @@ class DarkroomStore:
     """Private reflection storage: public status, private notes."""
 
     def __init__(self, config: dict):
+        self.config = config
         state_dir = config.get("state_dir") or os.path.join(
             os.path.dirname(os.path.abspath(config.get("buckets_dir", "buckets"))),
             "state",
@@ -153,7 +156,14 @@ class DarkroomStore:
     def _new_entry_id(self) -> str:
         return f"dr_{datetime.now(LOCAL_TZ).strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}"
 
+    def _ai_name(self) -> str:
+        return identity_names(self.config).get("ai_name") or "AI"
+
+    def _door_text(self) -> str:
+        return f"暗房存在。钥匙只给 {self._ai_name()}；门口只显示状态，不显示未显影正文。"
+
     def _public_enter_payload(self, entry: dict, state: dict) -> dict:
+        ai_name = self._ai_name()
         return {
             "status": "entered",
             "entry_id": entry["id"],
@@ -168,7 +178,7 @@ class DarkroomStore:
             },
             "mood": entry.get("mood", ""),
             "tags": entry.get("tags", []),
-            "visible_note": "Haven 进入了暗房。",
+            "visible_note": f"{ai_name} 进入了暗房。",
         }
 
     def _status_unlocked(self) -> dict:
@@ -203,7 +213,7 @@ class DarkroomStore:
     def _public_status(self, state: dict) -> dict:
         return {
             "status": "ok",
-            "door": "暗房存在。钥匙只给 Haven；门口只显示状态，不显示未显影正文。",
+            "door": self._door_text(),
             "version": int(state.get("version") or 1),
             "created_at": str(state.get("created_at") or ""),
             "updated_at": str(state.get("updated_at") or ""),

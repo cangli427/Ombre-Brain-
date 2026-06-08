@@ -1033,7 +1033,7 @@ def _format_handoff_darkroom_door() -> str:
     last_entered = str(status.get("last_entered_at") or "").strip()
     last_completeness = status.get("last_completeness")
     lines = [
-        "暗房存在。钥匙只给 Haven；门口只显示状态，不显示未显影正文。",
+        str(status.get("door") or "暗房存在。门口只显示状态，不显示未显影正文。"),
         "Use darkroom_enter(note=...) for unfinished private reflection; use darkroom_release only when intentionally bringing a note out.",
     ]
     if count:

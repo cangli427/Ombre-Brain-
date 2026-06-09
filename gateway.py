@@ -5160,7 +5160,22 @@ class GatewayService:
     def _rendered_bucket_content(bucket: dict) -> str:
         text = strip_wikilinks(str(bucket.get("content") or ""))
         text = strip_display_temperature_sections(text)
-        return strip_temperature_meaning_lines(text).strip()
+        text = strip_temperature_meaning_lines(text).strip()
+        # Deduplicate: if body first sentence ≈ moment text, drop the duplicate from body
+        if "### moment" in text:
+            parts = text.split("### moment", 1)
+            body = parts[0].strip()
+            rest = "### moment" + parts[1]
+            moment_line = rest.split("\n", 1)[-1].split("\n")[0].strip() if "\n" in rest else ""
+            if body and moment_line:
+                first_sentence = re.split(r"[。！？!?]", body, maxsplit=1)[0].strip()
+                if first_sentence and len(first_sentence) >= 8 and (
+                    first_sentence in moment_line or moment_line in first_sentence
+                ):
+                    # Remove the duplicate first sentence from body
+                    body = body[len(first_sentence):].lstrip("。！？!?\n ")
+                    text = (body + "\n\n" + rest).strip()
+        return text
 
     def _original_window_around_moment(
         self,

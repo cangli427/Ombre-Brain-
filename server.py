@@ -1340,7 +1340,7 @@ def _normalize_memory_sections_for_write(content: str) -> str:
         return ""
     migration = plan_bucket_migration(
         {"id": "write_preview", "content": raw, "metadata": {"name": "write_preview"}},
-        body_only_moment="first_sentence",
+        body_only_moment="skip",
     )
     if migration:
         return migration.new_content.strip()
@@ -6148,12 +6148,16 @@ async def hold(
     if "### moment" not in content:
         body_text = content.split("###")[0].strip() if "###" in content else content.strip()
         if body_text and len(body_text) >= 10:
+            generated_moment = ""
             try:
                 generated_moment = await dehydrator.generate_moment(body_text)
             except Exception:
-                generated_moment = ""
+                pass
+            # Fallback: first sentence if LLM failed
+            if not generated_moment:
+                m = re.search(r"^(.{12,60}?[。！？!?])", body_text)
+                generated_moment = m.group(1) if m else body_text[:40]
             if generated_moment:
-                # Insert moment after body, before first ### section
                 if "###" in content:
                     parts = content.split("###", 1)
                     content = f"{parts[0].strip()}\n\n### moment\n{generated_moment}\n\n### {parts[1]}"
@@ -6336,10 +6340,15 @@ async def grow(content: str, auto: bool = False, source: str = "", title: str = 
     if "### moment" not in content:
         body_text = content.split("###")[0].strip() if "###" in content else content.strip()
         if body_text and len(body_text) >= 10:
+            generated_moment = ""
             try:
                 generated_moment = await dehydrator.generate_moment(body_text)
             except Exception:
-                generated_moment = ""
+                pass
+            # Fallback: first sentence if LLM failed
+            if not generated_moment:
+                m = re.search(r"^(.{12,60}?[。！？!?])", body_text)
+                generated_moment = m.group(1) if m else body_text[:40]
             if generated_moment:
                 if "###" in content:
                     parts = content.split("###", 1)

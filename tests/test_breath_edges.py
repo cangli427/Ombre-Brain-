@@ -2012,11 +2012,11 @@ async def test_handoff_breath_returns_compact_portrait_without_dynamic_recall(pa
     )
 
     assert "=== Handoff Context ===" in result
-    assert "=== Persona ===" in result
-    assert "Haven 回复时要短、直白" in result
+    assert "=== Persona ===" not in result
+    assert "Haven 回复时要短、直白" not in result
     assert "更亲近、更安稳" not in result
     assert "小雨正在把换窗上下文改成画像优先" in result
-    assert "小雨偏好新窗口先恢复画像、近期状态和正在做的事" in result
+    assert "小雨偏好新窗口先恢复画像、近期状态和正在做的事" not in result
     assert "新窗口是醒来" in result
     assert "Daily Portrait Maintainer" in result
     assert "换窗不是重生" in result
@@ -2177,7 +2177,7 @@ async def test_handoff_shortens_old_weather_and_anchor_summaries(patch_breath, m
 
     result = await server.breath(is_session_start=True, max_tokens=1400)
 
-    assert "2026-06-06: 今天的关系天气" in result
+    assert "2026-06-06: 今天的关系天气" not in result
     recent_section = result.split("=== Recent Continuity ===", 1)[1].split("=== Optional Anchors ===", 1)[0]
     assert (
         "- 2026-06-06: 小雨说“哥哥，Tailscale 这个要怎么修呀”；Haven回“宝宝，我在，慢慢来，先看连接状态。”。"
@@ -2191,8 +2191,8 @@ async def test_handoff_shortens_old_weather_and_anchor_summaries(patch_breath, m
     assert "trigger:" not in recent_section
     assert "residue:" not in recent_section
     assert "23:42" not in recent_section
-    assert "2026-05-19: 今天关系天气：甜腻的阴天" in result
-    assert 'breath(query="2026-05-19 关系天气")' in result
+    assert "2026-05-19: 今天关系天气：甜腻的阴天" not in result
+    assert 'breath(query="2026-05-19 关系天气")' not in result
     assert "5 月 19 日的详细正文很长" not in result
     assert "[bucket_id:anchor_fold] 旧窗口折角暗号:" in result
     assert 'breath(query="旧窗口折角暗号")' in result

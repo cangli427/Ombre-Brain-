@@ -929,20 +929,8 @@ async def _build_handoff_breath(max_tokens: int = 1200, session_id: str = "", de
         portrait_sections = {}
 
     user_portrait = str(portrait_sections.get("user") or "").strip()
-    profile_facts = _format_handoff_profile_facts(all_buckets, limit=4)
-    if user_portrait and profile_facts:
-        user_portrait = "\n".join([user_portrait, "Profile Facts:", profile_facts])
-    elif not user_portrait:
-        user_portrait = profile_facts
 
     relationship_portrait = str(portrait_sections.get("relationship") or "").strip()
-    relationship_weather = _format_handoff_relationship_weather(all_buckets)
-    if relationship_weather:
-        relationship_portrait = "\n".join(
-            part for part in [relationship_portrait, relationship_weather] if part.strip()
-        )
-
-    persona_portrait = str(portrait_sections.get("persona") or "").strip()
     portrait_recent_continuity = str(portrait_sections.get("recent_continuity") or "").strip()
     live_recent_continuity = _format_handoff_personal_recent_continuity(all_buckets, limit=3)
     if _handoff_recent_continuity_is_natural(portrait_recent_continuity):
@@ -962,18 +950,13 @@ async def _build_handoff_breath(max_tokens: int = 1200, session_id: str = "", de
     anchors = _format_handoff_anchors(all_buckets, limit=2)
     darkroom_door = _format_handoff_darkroom_door()
 
-    persona_portrait = _trim_text_to_token_budget(persona_portrait, 360)
-    user_portrait = _trim_text_to_token_budget(user_portrait, 430)
-    relationship_portrait = _trim_text_to_token_budget(relationship_portrait, 520)
-    recent_continuity = _trim_text_to_token_budget(recent_continuity, 380)
+    user_portrait = _trim_text_to_token_budget(user_portrait, 220)
+    relationship_portrait = _trim_text_to_token_budget(relationship_portrait, 240)
+    recent_continuity = _trim_text_to_token_budget(recent_continuity, 460)
     anchors = _trim_text_to_token_budget(anchors, 220)
     darkroom_door = _trim_text_to_token_budget(darkroom_door, 120)
 
     sections = [
-        (
-            "Persona",
-            persona_portrait,
-        ),
         (
             "User Portrait",
             user_portrait

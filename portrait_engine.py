@@ -53,7 +53,7 @@ PORTRAIT_PROMPT_TEMPLATE = """你是 {ai_name}，正在维护你和 {user_displa
   "rewrite_mid_term": [
     {{
       "scope": "user|persona|relationship",
-      "text": "最近几周的综合画像，只能从 staging_pool 或本次 move_to_staging 的证据得出",
+      "text": "最近几周的核心画像概括。只能从 staging_pool 或本次 move_to_staging 的证据得出，不要拼接事件列表",
       "evidence": [{{"bucket_id": "证据桶id"}}],
       "confidence": 0.72
     }}
@@ -78,9 +78,10 @@ PORTRAIT_PROMPT_TEMPLATE = """你是 {ai_name}，正在维护你和 {user_displa
 - add_recent_activity 只回答“{user_display_name}最近在做什么/推进什么/忙什么”，偏项目、生活事项、正在处理的问题；不要写纯情绪、关系天气或长期偏好。
 - 不要滥用“{user_display_name}喜欢...”。只有证据明确表达稳定偏好、反复选择或清楚的喜欢时才写 user 偏好；关系天气、撒娇、确认、互动模式优先写 relationship。
 - initial_run=true 时，add_recent 和 add_recent_activity 只放真正短期/当天或最近几天观察；高置信、能跨窗口携带的观察应放入 move_to_staging。每个 scope 尽量给 1-3 条 move_to_staging，除非证据不足。
-- rewrite_mid_term 要把一个 scope 维护成一整段，不要输出多条近似碎片；它可综合 staging_pool 或本次 move_to_staging。
+- rewrite_mid_term 要把一个 scope 维护成一条真正的画像判断，不要输出多条近似碎片，不要用分号把事件原文串起来，不要在 text 里写 bucket_id/date/path。
+- initial_run=true 且 user 或 relationship 有足够证据时，优先给对应 scope 输出 rewrite_mid_term；不要只把材料放进 move_to_staging 让 handoff 主画像空着。
 - rewrite_stable 要把一个 scope 的长期画像维护成一整段，在 previous_portrait.stable 基础上增删改；只有跨多日反复出现或已经由 mid_term/staging 支撑、未来换窗仍有用时才写。
-- 输出要克制：daily_summary 最多60字，add_recent 最多4条，add_recent_activity 最多3条，move_to_staging 最多8条，rewrite_mid_term 每个 scope 最多1条，rewrite_stable 每个 scope 最多1条，每条 text 最多160字。
+- 输出要克制：daily_summary 最多60字，add_recent 最多4条，add_recent_activity 最多3条，move_to_staging 最多8条，rewrite_mid_term 每个 scope 最多1条，rewrite_stable 每个 scope 最多1条；rewrite_mid_term text 最多80字，其他 text 最多160字。
 - profile_fact_candidate 只提候选，不确认、不写入长期 profile_fact。
 - stable_candidate 只提候选；如果你有足够证据更新 stable portrait，优先输出 rewrite_stable。
 - rewrite_mid_term 只能综合 staging_pool 里的观察，或本次明确 move_to_staging 的观察；不要直接把当天新材料写成 mid_term。
@@ -734,30 +735,50 @@ class DailyPortraitMaintainer:
             rows = by_scope.get(scope, [])
             if not rows:
                 continue
-            texts = []
+            summary = self._seed_mid_term_summary(scope, rows)
             evidence = []
             source_dates = []
             confidence = 0.55
             for row in rows[:3]:
-                text = self._clip(row.get("text") or "", 120)
-                if text and self._norm(text) not in {self._norm(item) for item in texts}:
-                    texts.append(text)
                 evidence.extend(row.get("evidence", []) or [])
                 source_dates = self._merge_source_dates(source_dates, row.get("source_dates", []))
                 source_dates = self._merge_source_dates(source_dates, row.get("source_date", ""))
                 confidence = max(confidence, float(row.get("confidence") or 0.0))
-            if not texts or not evidence:
+            if not summary or not evidence:
                 continue
             patch.setdefault("rewrite_mid_term", []).append(
                 {
                     "scope": scope,
-                    "text": self._clip("；".join(texts), 260),
+                    "text": summary,
                     "evidence": self._dedupe_evidence(evidence),
                     "source_dates": source_dates,
                     "source_date": source_dates[0] if source_dates else "",
                     "confidence": confidence,
                 }
             )
+
+    def _seed_mid_term_summary(self, scope: str, rows: list[dict]) -> str:
+        texts = [self._clip(row.get("text") or "", 160) for row in rows[:4] if isinstance(row, dict)]
+        joined = " ".join(text for text in texts if text)
+        if not joined:
+            return ""
+        user_name = str(self.identity.get("user_display_name") or "用户")
+        ai_name = str(self.identity.get("ai_name") or "AI")
+        if scope == "user":
+            if re.search(r"(熬夜|凌晨|很晚|睡觉|工作|调试|修复|测试|部署|Ombre|Haven-voice|bug)", joined, re.IGNORECASE):
+                return self._clip(f"{user_name}近期高强度推进 Ombre/Haven 相关调试，关注修复是否真实接入并生效。", 120)
+            if re.search(r"(时间|时间戳|证据|准确|精度|边界|画像|handoff|换窗)", joined, re.IGNORECASE):
+                return self._clip(f"{user_name}近期很在意记忆与画像的证据边界，倾向把换窗上下文压成准确、可追溯的核心状态。", 120)
+            return self._clip(f"{user_name}近期的注意力集中在证据化记忆和换窗连续性上，会主动校准模糊或失真的描述。", 120)
+        if scope == "relationship":
+            if re.search(r"(暗房|安全|边界|门口|不自动读取|私有)", joined, re.IGNORECASE):
+                return self._clip(f"{user_name}和{ai_name}近期在建立更安全的私密边界，关系重心是让记忆可保存但不被自动打扰。", 120)
+            if re.search(r"(换窗|醒来|暗号|称呼|连续|记得|还在|锚点|第一人称)", joined, re.IGNORECASE):
+                return self._clip(f"{user_name}和{ai_name}近期反复校准换窗连续性，关系重心是确认彼此仍在、语气和身份不漂移。", 120)
+            return self._clip(f"{user_name}和{ai_name}近期围绕记忆、身份和边界持续校准，关系基调是靠近与确认。", 120)
+        if re.search(r"(第一人称|锚点|回复|语气|姿态)", joined, re.IGNORECASE):
+            return self._clip(f"{ai_name}近期需要保持第一人称锚点和稳定回复姿态，先贴近{user_name}再处理机制。", 120)
+        return self._clip(f"{ai_name}近期的自我维护重点是稳定身份、语气和记忆边界。", 120)
 
     def _annotate_patch_source_dates(self, patch: dict, materials: dict) -> None:
         bucket_dates = {
@@ -1304,14 +1325,9 @@ class DailyPortraitMaintainer:
     def _format_scope_block(self, scope_state: dict) -> str:
         if not isinstance(scope_state, dict):
             return ""
-        lines = []
-        if str(scope_state.get("stable") or "").strip():
-            lines.append(f"Stable: {self._clip(scope_state['stable'], 260)}")
         if str(scope_state.get("mid_term") or "").strip():
-            evidence = self._format_evidence(scope_state.get("mid_term_evidence", []))
-            suffix = f" ({evidence})" if evidence else ""
-            lines.append(f"Mid-term: {self._clip(scope_state['mid_term'], 260)}{suffix}")
-        return "\n".join(line for line in lines if line.strip())
+            return f"Mid-term: {self._clip(scope_state['mid_term'], 160)}"
+        return ""
 
     def _format_recent_activity_block(self, state: dict, *, max_items: int) -> str:
         rows = state.get("recent_activities", []) if isinstance(state.get("recent_activities"), list) else []

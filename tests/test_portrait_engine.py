@@ -141,6 +141,8 @@ async def test_daily_portrait_maintainer_writes_evidence_bound_state_only(tmp_pa
     sections = engine.build_handoff_sections(max_recent_items=4)
     assert "最近在做什么:" not in sections["user"]
     assert "小雨最近在推进 Ombre-Brain 换窗 handoff 和 portrait maintainer" not in sections["user"]
+    assert sections["relationship"] == "Mid-term: 换窗连续性优先恢复身份、关系和近期正在做的事。"
+    assert "bucket_id:" not in sections["relationship"]
     assert "2026-06-07 10:00 / doing: 小雨最近在推进 Ombre-Brain 换窗 handoff 和 portrait maintainer" in sections["recent_continuity"]
 
 
@@ -502,7 +504,7 @@ def test_portrait_seeds_missing_mid_term_from_staging(tmp_path, test_config):
     assert patch["rewrite_mid_term"] == [
         {
             "scope": "relationship",
-            "text": "小雨和Haven最近在确认换窗后的连续感。",
+            "text": "小雨和Haven近期反复校准换窗连续性，关系重心是确认彼此仍在、语气和身份不漂移。",
             "evidence": [{"bucket_id": "staging-bucket"}],
             "source_dates": ["2026-06-10"],
             "source_date": "2026-06-10",

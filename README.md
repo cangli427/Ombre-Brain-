@@ -80,22 +80,28 @@
 ```text
 聊天客户端
   -> Ombre Gateway :18002
-    -> 读取 buckets / embeddings / persona_state / portrait_state / gateway_state / memory_moments / memory_edges
-    -> 拼隐藏上下文
-    -> 转发上游模型
-    -> 回复成功后更新 Persona State 和召回记录
+    -> 按 X-Ombre-Session-Id 读取 gateway_state / persona_state / portrait_state
+    -> prepare_payload() 按 turn 类型和配置选择上下文块：
+       Core Memory / Portrait Memory
+       Just Now Chat Context / Recent Context / Date Persona Trace
+       Recalled Memory / Targeted Memory Detail / Diffused Memory
+       Relationship Weather / Favorite Memory / Dream Context
+    -> 转发 OpenAI-compatible 或 Anthropic-compatible 上游模型
+    -> 回复成功后记录 recalled ids、conversation_turns、upstream usage
+    -> 评估最终自然语言回复，更新 Persona State
 
 MCP / Dashboard / 写入 API
   -> Ombre-Brain server :18001
-    -> 写 Markdown bucket
-    -> 写 embeddings.db
-    -> 自动 enrich 记忆与关系边
-    -> 生成日印象
+    -> breath/read_bucket/comment_bucket/hold/grow/trace/profile_fact 等 MCP 工具
+    -> 写 Markdown bucket、metadata.comments、profile_fact、darkroom
+    -> 刷新 embeddings.db / memory_moments.sqlite / memory_nodes.sqlite / memory_edges.jsonl
+    -> 维护 portrait_state、dreams、relationship_weather 和 Dashboard runtime config
 
 维护脚本
-  -> Supabase memories
-  -> Tombstones
-  -> 旧 feel 桶清理
+  -> 部署更新、健康检查、备份
+  -> embedding 回填/重建/孤儿清理
+  -> 旧 affect_anchor / feel / bucket 文件迁移
+  -> 可选 Supabase 同步与 tombstone 传播
 ```
 
 ## 数据模型

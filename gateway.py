@@ -2947,7 +2947,7 @@ class GatewayService:
             profile_id=profile_id,
             session_id=session_id,
             limit=max_turns + 4,
-            hours=168,
+            hours=12,
         )
         current_user = self._clean_conversation_turn_text(user_message)
         current_assistant = self._clean_conversation_turn_text(assistant_response)

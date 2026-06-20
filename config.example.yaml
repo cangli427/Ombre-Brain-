@@ -149,6 +149,7 @@ embedding:
   model: "Qwen/Qwen3-Embedding-4B"  # Embedding model / 向量化模型
   base_url: "https://api.siliconflow.cn/v1"
   max_chars: 6000                 # Max chars sent per embedding request / 单次向量化最多字符数
+  query_timeout_seconds: 3         # Gateway recall query timeout / Gateway 召回查询向量超时秒数
   query_instruction: "Given a memory search query, retrieve relevant long-term memory passages."
   document_instruction: ""
   # api_key: ""                   # Use env var OMBRE_EMBEDDING_API_KEY / 请使用环境变量
@@ -353,6 +354,7 @@ gateway:
   query_planner_min_chars: 16  # also catches short emotional reason lookups like "今天为什么激动哭"
   query_planner_max_queries: 3
   query_planner_max_tokens: 360
+  query_planner_supplemental_semantic: false # planner short queries use keyword/exact by default; avoids repeated embedding calls
   memory_detail_recall_enabled: false # optional internal [memory_detail ids="..."] retry for admitted bucket ids
   memory_detail_recall_max_ids: 3
   memory_detail_recall_budget: 1200

@@ -475,6 +475,17 @@ class GatewayService:
         self.keyword_weight = float(self.gateway_cfg.get("keyword_weight", 0.35))
         self.importance_weight = float(self.gateway_cfg.get("importance_weight", 0.10))
         self.freshness_weight = float(self.gateway_cfg.get("freshness_weight", 0.10))
+        embedding_cfg = config.get("embedding", {}) if isinstance(config.get("embedding", {}), dict) else {}
+        try:
+            embedding_timeout = float(
+                self.gateway_cfg.get(
+                    "embedding_query_timeout_seconds",
+                    embedding_cfg.get("query_timeout_seconds", 3),
+                )
+            )
+        except (TypeError, ValueError):
+            embedding_timeout = 3.0
+        self.embedding_query_timeout_seconds = max(0.0, min(30.0, embedding_timeout))
         self.first_card_min_score = float(self.gateway_cfg.get("first_card_min_score", 0.55))
         self.second_card_min_score = float(self.gateway_cfg.get("second_card_min_score", 0.50))
         self.second_card_relative_score = float(
@@ -512,6 +523,10 @@ class GatewayService:
         self.query_planner_min_chars = max(0, int(self.gateway_cfg.get("query_planner_min_chars", 16)))
         self.query_planner_max_queries = max(1, min(3, int(self.gateway_cfg.get("query_planner_max_queries", 3))))
         self.query_planner_max_tokens = max(128, int(self.gateway_cfg.get("query_planner_max_tokens", 360)))
+        self.query_planner_supplemental_semantic = self._bool_config_value(
+            self.gateway_cfg.get("query_planner_supplemental_semantic"),
+            False,
+        )
         self.query_planner_score_bonus = self._clamp(
             float(self.gateway_cfg.get("query_planner_score_bonus", 0.04)),
             0.0,
@@ -6529,6 +6544,7 @@ class GatewayService:
         list[dict], list[dict], list[dict], list[dict], dict[str, Any]
     ]:
         query_planner_debug = self._query_planner_debug_base(query)
+        timing_debug = query_planner_debug.setdefault("timing_ms", {})
         if not query or self.inject_max_cards <= 0:
             return self._empty_moment_selection(
                 include_query_planner_debug=include_query_planner_debug,
@@ -6542,6 +6558,7 @@ class GatewayService:
             )
         anchor_plan = self._query_anchor_plan(query)
 
+        stage_started_at = time.perf_counter()
         relevance_query = self._query_has_relevance_facet(query)
         eligible_ids = {
             bucket["id"]
@@ -6555,6 +6572,7 @@ class GatewayService:
                 or (relevance_query and self._is_relevance_candidate_bucket(query, bucket))
             )
         }
+        self._add_timing_ms(timing_debug, "moment.eligible_ids", stage_started_at)
         if not eligible_ids:
             query_planner_debug["skip_reason"] = "no_eligible_buckets"
             return self._empty_moment_selection(
@@ -6562,6 +6580,7 @@ class GatewayService:
                 query_planner_debug=query_planner_debug,
             )
 
+        stage_started_at = time.perf_counter()
         search_query = self._normalized_recall_query(query)
         selected_buckets, suppressed_buckets, query_planner_debug = await self._select_dynamic_buckets(
             query,
@@ -6570,6 +6589,9 @@ class GatewayService:
             search_query=search_query,
             include_query_planner_debug=True,
         )
+        timing_debug = query_planner_debug.setdefault("timing_ms", {})
+        self._add_timing_ms(timing_debug, "moment.select_dynamic_buckets", stage_started_at)
+        stage_started_at = time.perf_counter()
         selected_buckets = self._with_explicit_source_record_buckets(
             query,
             selected_buckets,
@@ -6580,6 +6602,8 @@ class GatewayService:
             for bucket in selected_buckets
             if bucket.get("id")
         ]
+        self._add_timing_ms(timing_debug, "moment.source_record_extend", stage_started_at)
+        stage_started_at = time.perf_counter()
         selected_bucket_ids = [bucket["id"] for bucket in selected_buckets if bucket.get("id")]
         bucket_boosts = {bucket_id: 1.0 for bucket_id in selected_bucket_ids}
         eligible_buckets = [
@@ -6601,6 +6625,8 @@ class GatewayService:
                 self._clamp(score) * self.word_map_hint_moment_boost,
             )
         candidates = []
+        self._add_timing_ms(timing_debug, "moment.word_map_boost", stage_started_at)
+        stage_started_at = time.perf_counter()
         if search_query:
             moment_search_queries = [search_query]
             raw_moment_query = str(query or "").strip()
@@ -6619,6 +6645,8 @@ class GatewayService:
                     if moment_id:
                         seen_moment_ids.add(moment_id)
                     candidates.append(moment)
+        self._add_timing_ms(timing_debug, "moment.search_moments", stage_started_at)
+        stage_started_at = time.perf_counter()
         explicit_lookup = self._query_explicitly_requests_caution_memory(query)
         candidates = [
             moment for moment in candidates
@@ -6626,7 +6654,11 @@ class GatewayService:
             and can_moment_be_direct_seed(moment, explicit_lookup=explicit_lookup)
         ]
         candidates = self._apply_relevance_to_moment_candidates(query, candidates)
+        self._add_timing_ms(timing_debug, "moment.filter_relevance", stage_started_at)
+        stage_started_at = time.perf_counter()
         candidates = await self._rerank_moment_candidates(query, candidates)
+        self._add_timing_ms(timing_debug, "moment.rerank_candidates", stage_started_at)
+        stage_started_at = time.perf_counter()
         admitted_bucket_ids = set(selected_bucket_ids)
         admitted_candidates = []
         suppressed_candidates = []
@@ -6660,9 +6692,11 @@ class GatewayService:
             else:
                 suppressed_candidates.append(item)
         candidates = admitted_candidates
+        self._add_timing_ms(timing_debug, "moment.admit_candidates", stage_started_at)
 
         selected: list[dict] = []
         seen_buckets: set[str] = set()
+        stage_started_at = time.perf_counter()
         for bucket_id in selected_bucket_ids:
             moment = next(
                 (
@@ -6701,6 +6735,7 @@ class GatewayService:
             if moment and bucket_id not in seen_buckets:
                 selected.append(moment)
                 seen_buckets.add(bucket_id)
+        self._add_timing_ms(timing_debug, "moment.pick_selected", stage_started_at)
 
         if selected:
             result = (selected[: self.inject_max_cards], candidates, suppressed_candidates, suppressed_buckets)
@@ -6708,6 +6743,7 @@ class GatewayService:
                 return (*result, query_planner_debug)
             return result
 
+        stage_started_at = time.perf_counter()
         recent_ids = self.state_store.get_recent_bucket_ids(session_id, self.skip_recent_rounds)
         active_candidates = [
             moment for moment in candidates
@@ -6723,6 +6759,7 @@ class GatewayService:
             seen_buckets.add(bucket_id)
             if len(selected) >= self.inject_max_cards:
                 break
+        self._add_timing_ms(timing_debug, "moment.fallback_select", stage_started_at)
         result = (selected, candidates, suppressed_candidates, suppressed_buckets)
         if include_query_planner_debug:
             return (*result, query_planner_debug)
@@ -8446,7 +8483,19 @@ class GatewayService:
             "errors": [],
             "model": self.query_planner_model,
             "model_source": "dehydration" if self.query_planner_uses_dehydrator else "gateway",
+            "semantic": {
+                "query_timeout_seconds": self.embedding_query_timeout_seconds,
+                "supplemental_enabled": self.query_planner_supplemental_semantic,
+            },
+            "timing_ms": {},
         }
+
+    @staticmethod
+    def _add_timing_ms(target: dict[str, Any] | None, name: str, started_at: float) -> None:
+        if not isinstance(target, dict):
+            return
+        elapsed_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+        target[name] = target.get(name, 0) + elapsed_ms
 
     def _normalized_recall_query(self, query: str) -> str:
         topic = str(recall_topic_query(query, self.relevance_options) or "").strip()
@@ -9078,12 +9127,19 @@ class GatewayService:
         search_query: str = "",
         required_terms: list[str] | None = None,
         planner_query: dict[str, Any] | None = None,
+        allow_semantic: bool = True,
+        timing_debug: dict[str, Any] | None = None,
+        timing_prefix: str = "candidate",
     ) -> tuple[list[dict], list[dict]]:
+        def mark(name: str, started_at: float) -> None:
+            self._add_timing_ms(timing_debug, f"{timing_prefix}.{name}", started_at)
+
         if not query or self.inject_max_cards <= 0:
             return [], []
         if self._auto_query_too_vague(query):
             return [], []
 
+        stage_started_at = time.perf_counter()
         relevance_query = self._query_has_relevance_facet(query)
         eligible = [
             bucket for bucket in all_buckets
@@ -9093,6 +9149,7 @@ class GatewayService:
             )
             or (relevance_query and self._is_relevance_candidate_bucket(query, bucket))
         ]
+        mark("eligible_filter", stage_started_at)
         if not eligible:
             return [], []
 
@@ -9101,12 +9158,22 @@ class GatewayService:
         normalized_query = str(search_query or "").strip()
         if not normalized_query:
             normalized_query = self._normalized_recall_query(raw_query)
+        stage_started_at = time.perf_counter()
         keyword_scores = self._get_keyword_candidates(normalized_query, eligible) if normalized_query else {}
-        semantic_scores = await self._get_semantic_candidates(raw_query, set(bucket_map))
+        mark("keyword_candidates", stage_started_at)
+        stage_started_at = time.perf_counter()
+        if allow_semantic:
+            semantic_scores = await self._get_semantic_candidates(raw_query, set(bucket_map))
+        else:
+            semantic_scores = {}
+        mark("semantic_candidates", stage_started_at)
+        stage_started_at = time.perf_counter()
         if planner_query is None and self._query_looks_emotional_reason_lookup(raw_query):
             exact_scores, exact_debug = {}, {}
         else:
             exact_scores, exact_debug = self._get_exact_anchor_candidates(raw_query, normalized_query, eligible)
+        mark("exact_anchor_candidates", stage_started_at)
+        stage_started_at = time.perf_counter()
         if normalized_query:
             word_map_scores, word_map_debug = self._get_word_map_hint_scores(
                 normalized_query,
@@ -9115,6 +9182,8 @@ class GatewayService:
             )
         else:
             word_map_scores, word_map_debug = {}, {}
+        mark("word_map_hint", stage_started_at)
+        stage_started_at = time.perf_counter()
         lexical_terms = self._planner_lexical_match_terms(required_terms)
         if (
             not lexical_terms
@@ -9132,10 +9201,12 @@ class GatewayService:
             if lexical_terms and bucket.get("id") and self._bucket_matches_any_planner_term(bucket, lexical_terms)
         }
         diversity_terms = self._query_anchor_terms_for_diversity(normalized_query or raw_query)
+        mark("lexical_candidates", stage_started_at)
         candidate_ids = set(keyword_scores) | set(semantic_scores) | set(exact_scores) | lexical_ids | set(word_map_scores)
         if not candidate_ids:
             return [], []
 
+        stage_started_at = time.perf_counter()
         now = datetime.now()
         recent_ids = self.state_store.get_recent_bucket_ids(session_id, self.skip_recent_rounds)
         scored_candidates = []
@@ -9215,7 +9286,9 @@ class GatewayService:
                     "matched_query_terms": matched_query_terms,
                 }
             )
+        mark("score_candidates", stage_started_at)
 
+        stage_started_at = time.perf_counter()
         scored_candidates.sort(
             key=lambda item: self._bucket_recall_rank(
                 query,
@@ -9223,7 +9296,11 @@ class GatewayService:
                 item["score"],
             )
         )
+        mark("sort_candidates", stage_started_at)
+        stage_started_at = time.perf_counter()
         scored_candidates = await self._rerank_scored_bucket_candidates(query, scored_candidates)
+        mark("rerank_bucket_candidates", stage_started_at)
+        stage_started_at = time.perf_counter()
         filtered = [
             item
             for item in scored_candidates
@@ -9253,6 +9330,7 @@ class GatewayService:
                 admitted_pool.append(item)
             else:
                 suppressed_candidates.append(item)
+        mark("admit_candidates", stage_started_at)
         return admitted_pool, suppressed_candidates
 
     async def _select_dynamic_buckets(
@@ -9265,6 +9343,7 @@ class GatewayService:
         include_query_planner_debug: bool = False,
     ) -> tuple[list[dict], list[dict]] | tuple[list[dict], list[dict], dict[str, Any]]:
         planner_debug = self._query_planner_debug_base(query)
+        timing_debug = planner_debug.setdefault("timing_ms", {})
         if not query or self.inject_max_cards <= 0:
             if include_query_planner_debug:
                 return [], [], planner_debug
@@ -9275,22 +9354,33 @@ class GatewayService:
                 return [], [], planner_debug
             return [], []
 
+        stage_started_at = time.perf_counter()
         active_pool, suppressed_candidates = await self._dynamic_bucket_candidate_items(
             query,
             session_id,
             all_buckets,
             search_query=search_query,
+            allow_semantic=True,
+            timing_debug=timing_debug,
+            timing_prefix="direct",
         )
+        self._add_timing_ms(timing_debug, "direct.candidate_items_total", stage_started_at)
+        stage_started_at = time.perf_counter()
         self._merge_word_map_hint_debug(planner_debug, active_pool + suppressed_candidates)
         self._merge_exact_anchor_debug(planner_debug, active_pool + suppressed_candidates)
         direct_selected = self._pick_dynamic_cards(active_pool, query=query)
         selected_items = list(direct_selected)
+        self._add_timing_ms(timing_debug, "direct.pick_cards", stage_started_at)
 
+        stage_started_at = time.perf_counter()
         trigger_reason = self._query_planner_trigger_reason(query, direct_selected)
+        self._add_timing_ms(timing_debug, "query_planner_trigger_check", stage_started_at)
         if trigger_reason:
             planner_debug["triggered"] = True
             planner_debug["trigger_reason"] = trigger_reason
+            stage_started_at = time.perf_counter()
             plan, error = await self._call_query_planner(query)
+            self._add_timing_ms(timing_debug, "query_planner_call", stage_started_at)
             if error:
                 planner_debug["errors"].append(error)
                 if trigger_reason == "emotional_reason_lookup":
@@ -9301,12 +9391,14 @@ class GatewayService:
                 planner_debug["queries"] = plan.get("queries", [])
                 if plan.get("should_search") and not plan.get("too_vague"):
                     supplemental_items: list[dict] = []
-                    for planner_query in plan.get("queries", [])[: self.query_planner_max_queries]:
+                    planner_debug["supplemental_semantic_enabled"] = self.query_planner_supplemental_semantic
+                    for index, planner_query in enumerate(plan.get("queries", [])[: self.query_planner_max_queries]):
                         short_query = str(planner_query.get("query") or "").strip()
                         must_terms = list(planner_query.get("must_terms") or [])
                         if not short_query or not must_terms:
                             continue
                         short_search_query = self._normalized_recall_query(short_query)
+                        stage_started_at = time.perf_counter()
                         admitted, suppressed = await self._dynamic_bucket_candidate_items(
                             short_query,
                             session_id,
@@ -9314,9 +9406,18 @@ class GatewayService:
                             search_query=short_search_query,
                             required_terms=must_terms,
                             planner_query=planner_query,
+                            allow_semantic=self.query_planner_supplemental_semantic,
+                            timing_debug=timing_debug,
+                            timing_prefix=f"supplemental_{index}",
+                        )
+                        self._add_timing_ms(
+                            timing_debug,
+                            f"supplemental_{index}.candidate_items_total",
+                            stage_started_at,
                         )
                         supplemental_items.extend(admitted)
                         suppressed_candidates.extend(suppressed)
+                        stage_started_at = time.perf_counter()
                         self._merge_word_map_hint_debug(planner_debug, admitted + suppressed)
                         self._merge_exact_anchor_debug(planner_debug, admitted + suppressed)
                         suppressed_must = [
@@ -9346,11 +9447,14 @@ class GatewayService:
                                 ],
                             }
                         )
+                        self._add_timing_ms(timing_debug, f"supplemental_{index}.debug_merge", stage_started_at)
                     if supplemental_items:
+                        stage_started_at = time.perf_counter()
                         selected_items = self._pick_dynamic_cards(
                             self._merge_dynamic_bucket_items(selected_items + supplemental_items, query),
                             query=query,
                         )
+                        self._add_timing_ms(timing_debug, "supplemental.pick_cards", stage_started_at)
                 else:
                     planner_debug["skip_reason"] = "planner_returned_no_search"
         elif self.query_planner_enabled:
@@ -9540,7 +9644,22 @@ class GatewayService:
         if not getattr(self.embedding_engine, "enabled", False):
             return {}
 
-        results = await self.embedding_engine.search_similar(query, top_k=self.dynamic_top_k)
+        try:
+            search = self.embedding_engine.search_similar(query, top_k=self.dynamic_top_k)
+            if self.embedding_query_timeout_seconds > 0:
+                results = await asyncio.wait_for(search, timeout=self.embedding_query_timeout_seconds)
+            else:
+                results = await search
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Gateway embedding semantic search timed out | query_chars=%s timeout_seconds=%.2f",
+                len(str(query or "")),
+                self.embedding_query_timeout_seconds,
+            )
+            return {}
+        except Exception as exc:
+            logger.warning("Gateway embedding semantic search failed: %s", exc)
+            return {}
         semantic_scores = {}
         for bucket_id, similarity in results:
             if bucket_id not in eligible_ids:

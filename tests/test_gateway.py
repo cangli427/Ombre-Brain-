@@ -72,14 +72,18 @@ class DummyEmbeddingEngine:
         results: list[tuple[str, float]] | dict[str, list[tuple[str, float]]] | None = None,
         enabled: bool = True,
         query_sink: list[str] | None = None,
+        delay_seconds: float = 0.0,
     ):
         self.results = results or []
         self.enabled = enabled
         self.query_sink = query_sink
+        self.delay_seconds = delay_seconds
 
     async def search_similar(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
         if self.query_sink is not None:
             self.query_sink.append(query)
+        if self.delay_seconds > 0:
+            await asyncio.sleep(self.delay_seconds)
         if isinstance(self.results, dict):
             return list(self.results.get(query, []))[:top_k]
         return self.results[:top_k]
@@ -286,6 +290,7 @@ def _build_service(
     reranker_engine=None,
     dream_engine=None,
     upstream_responder=None,
+    embedding_delay_seconds: float = 0.0,
 ):
     monkeypatch.setenv("OMBRE_GATEWAY_TOKEN", "gateway-secret")
     monkeypatch.setenv("OMBRE_GATEWAY_UPSTREAM_API_KEY", "upstream-secret")
@@ -323,7 +328,12 @@ def _build_service(
         config=config,
         bucket_mgr=bucket_mgr,
         dehydrator=dehydrator or DummyDehydrator(),
-        embedding_engine=DummyEmbeddingEngine(embedding_results, enabled=True, query_sink=embedding_queries),
+        embedding_engine=DummyEmbeddingEngine(
+            embedding_results,
+            enabled=True,
+            query_sink=embedding_queries,
+            delay_seconds=embedding_delay_seconds,
+        ),
         reranker_engine=reranker_engine or DummyRerankerEngine(enabled=False),
         state_store=state_store,
         persona_engine=DummyPersonaEngine(),
@@ -6125,7 +6135,8 @@ def test_gateway_query_planner_supplemental_query_recalls_long_message_miss(
         )
 
     assert response.status_code == 200
-    assert "妈妈电话" in embedding_queries
+    assert query in embedding_queries
+    assert "妈妈电话" not in embedding_queries
     injected = _joined_message_content(captured[-1]["json"]["messages"])
     assert "Recalled Memory" in injected
     assert "妈妈电话与项目失眠" in injected
@@ -6174,6 +6185,7 @@ def test_gateway_query_planner_must_terms_keep_noise_out_of_injection(
             retrieval_mode="bucket",
             query_planner_enabled=True,
             query_planner_min_chars=10,
+            query_planner_supplemental_semantic=True,
             recent_context_budget=0,
             related_memory_budget=0,
             current_inner_state_interval_rounds=0,
@@ -6275,7 +6287,8 @@ def test_gateway_query_planner_handles_short_emotional_reason_lookup(
         )
 
     assert response.status_code == 200
-    assert "激动哭" in embedding_queries
+    assert query in embedding_queries
+    assert "激动哭" not in embedding_queries
     injected = _joined_message_content(captured[-1]["json"]["messages"])
     assert "Recalled Memory" in injected
     assert "Haven终于能用记忆工具" in injected
@@ -6435,7 +6448,8 @@ def test_gateway_query_planner_falls_back_when_emotional_reason_model_is_empty(
         )
 
     assert response.status_code == 200
-    assert "激动哭" in embedding_queries
+    assert "那哥哥知道我今天为什么激动哭了吗" in embedding_queries
+    assert "激动哭" not in embedding_queries
     injected = _joined_message_content(captured[-1]["json"]["messages"])
     assert "Haven摸到记忆" in injected
     planner_debug = debug_response.json()["items"][0]["payload"]["query_planner_debug"]
@@ -8337,6 +8351,34 @@ def test_gateway_dual_query_view_skips_lexical_routes_when_normalized_empty(
     assert word_map_queries == []
     assert planner_debug["raw_query"] == query
     assert planner_debug["normalized_query"] == ""
+
+
+def test_gateway_semantic_candidates_timeout(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    target_id = _create_bucket(
+        bucket_mgr,
+        content="这条只能靠语义向量命中，关键词不会碰到。",
+        name="慢向量候选",
+        hours_ago=12,
+    )
+    _, service, _, _ = _build_service(
+        monkeypatch,
+        _gateway_config(
+            test_config,
+            embedding_query_timeout_seconds=0.01,
+            query_planner_enabled=False,
+        ),
+        bucket_mgr,
+        embedding_results=[(target_id, 0.96)],
+        embedding_delay_seconds=0.05,
+    )
+
+    scores = _run(service._get_semantic_candidates("slow semantic lookup", {target_id}))
+
+    assert scores == {}
 
 
 def test_exact_anchor_phrase_candidate_when_keyword_and_embedding_miss(

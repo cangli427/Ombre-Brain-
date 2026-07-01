@@ -11759,6 +11759,78 @@ def test_activated_axis_rejects_high_confidence_technical_domain_diffusion(
     assert target_rows[0]["suppression_reason"] == "activated_axis_mismatch"
 
 
+def test_axis_lite_technical_terms_are_configurable(monkeypatch, test_config, bucket_mgr):
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        recalled_memory_budget=500,
+        related_memory_budget=500,
+        inject_total_budget=1600,
+        query_planner_enabled=False,
+        retrieval_mode="graph",
+        word_map_hint_enabled=False,
+        axis_lite={
+            "technical_axis_terms": ["晶核账本"],
+            "technical_database_terms": [],
+            "technical_domain_terms": ["项目域"],
+        },
+    )
+    seed_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n晶核账本记录导入脚本和查询端点。",
+        name="晶核账本",
+        hours_ago=4,
+        importance=9,
+        domain=["项目域"],
+    )
+    noise_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n奖励暗号里也提过晶核账本。",
+        name="奖励暗号与亲密互动",
+        hours_ago=6,
+        importance=9,
+        domain=["恋爱"],
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr)
+    all_buckets = _run(bucket_mgr.list_all())
+    all_moments, grouped_moments, moment_edges = service._refresh_moment_graph(all_buckets)
+    seed_moment = dict(grouped_moments[seed_id][0])
+    seed_moment["exact_anchor_match"] = True
+    noise_moment = dict(grouped_moments[noise_id][0])
+    noise_moment["score"] = 0.99
+
+    related_memory, debug_rows = service._build_moment_diffused_memory_with_debug(
+        [seed_moment],
+        [seed_moment, noise_moment],
+        all_moments,
+        moment_edges,
+        "晶核账本端点怎么查",
+    )
+
+    target_rows = [row for row in debug_rows if row["bucket_id"] == noise_id]
+    assert related_memory == ""
+    assert target_rows
+    assert target_rows[0]["suppression_reason"] == "activated_axis_mismatch"
+
+
+def test_axis_lite_technical_domain_terms_are_configurable(
+    monkeypatch, test_config, bucket_mgr
+):
+    cfg = _gateway_config(
+        test_config,
+        axis_lite={
+            "technical_axis_terms": ["晶核账本"],
+            "technical_database_terms": [],
+            "technical_domain_terms": ["项目域"],
+        },
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr)
+
+    assert service._axis_lite_node_has_technical_domain({"metadata": {"domain": ["项目域"]}})
+    assert not service._axis_lite_node_has_technical_domain({"metadata": {"domain": ["project_code"]}})
+
+
 def test_compound_query_preserves_distinct_anchor_cards(
     monkeypatch, test_config, bucket_mgr
 ):

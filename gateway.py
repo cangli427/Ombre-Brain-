@@ -573,6 +573,54 @@ MOMENT_SECTION_LABELS = {
 TASK_ONLY_MOMENT_SECTIONS = {"followup", "followup_log"}
 MOMENT_TEMPERATURE_SECTIONS = CONTEXT_ONLY_SECTIONS - TASK_ONLY_MOMENT_SECTIONS
 PROFILE_CONTEXT_SECTIONS = ("evidence_context", "context", "reflection", "feeling", "comment")
+DEFAULT_AXIS_LITE_TECHNICAL_AXIS_TERMS = (
+    "esp32",
+    "mpr121",
+    "sqlite",
+    "模块",
+    "硬件",
+    "接口",
+    "端点",
+    "api",
+    "gateway",
+    "bridge",
+    "mcp",
+    "embedding",
+    "rerank",
+    "代码",
+    "开源项目",
+)
+DEFAULT_AXIS_LITE_TECHNICAL_DATABASE_TERMS = (
+    "schema",
+    "端点",
+    "接口",
+    "代码",
+    "实现",
+    "导入",
+    "索引",
+    "查询",
+    "字段",
+    "表结构",
+    "迁移",
+    "sqlite",
+    "sql",
+)
+DEFAULT_AXIS_LITE_TECHNICAL_DOMAIN_TERMS = (
+    "projectcode",
+    "hardwareprotocol",
+    "hardware",
+    "code",
+    "debug",
+    "技术",
+    "技术计划",
+    "项目",
+    "工程",
+    "代码",
+    "硬件",
+    "协议",
+    "数据库",
+    "开发",
+)
 
 
 class GatewayService:
@@ -609,6 +657,26 @@ class GatewayService:
         self._moment_graph_cache_signature = ""
         self._moment_graph_cache_value: tuple[list[dict], dict[str, list[dict]], list[dict]] | None = None
         self.relevance_options = memory_relevance_options_from_config(config)
+        self.axis_lite_cfg = (
+            self.gateway_cfg.get("axis_lite", {})
+            if isinstance(self.gateway_cfg.get("axis_lite", {}), dict)
+            else {}
+        )
+        self.axis_lite_technical_axis_terms = self._axis_lite_config_terms(
+            self.axis_lite_cfg,
+            "technical_axis_terms",
+            DEFAULT_AXIS_LITE_TECHNICAL_AXIS_TERMS,
+        )
+        self.axis_lite_technical_database_terms = self._axis_lite_config_terms(
+            self.axis_lite_cfg,
+            "technical_database_terms",
+            DEFAULT_AXIS_LITE_TECHNICAL_DATABASE_TERMS,
+        )
+        self.axis_lite_technical_domain_terms = self._axis_lite_config_terms(
+            self.axis_lite_cfg,
+            "technical_domain_terms",
+            DEFAULT_AXIS_LITE_TECHNICAL_DOMAIN_TERMS,
+        )
         self.state_store = state_store or GatewayStateStore(
             os.path.join(config["buckets_dir"], "gateway_state.db")
         )
@@ -12826,6 +12894,19 @@ class GatewayService:
     def _compact_axis_text(value: object) -> str:
         return re.sub(r"[^0-9a-z\u4e00-\u9fff_.:-]+", "", str(value or "").strip().lower())
 
+    @staticmethod
+    def _axis_lite_config_terms(
+        cfg: dict[str, Any],
+        key: str,
+        fallback: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        value = cfg.get(key) if isinstance(cfg, dict) and key in cfg else fallback
+        if isinstance(value, str):
+            raw_terms = [value]
+        else:
+            raw_terms = list(value or [])
+        return tuple(str(term).strip() for term in raw_terms if str(term or "").strip())
+
     def _axis_lite_node_text(self, node: dict) -> str:
         if not isinstance(node, dict):
             return ""
@@ -12867,44 +12948,15 @@ class GatewayService:
         key = self._compact_axis_text(terms)
         if not key:
             return False
-        markers = (
-            "esp32",
-            "mpr121",
-            "sqlite",
-            "模块",
-            "硬件",
-            "接口",
-            "端点",
-            "api",
-            "gateway",
-            "bridge",
-            "mcp",
-            "embedding",
-            "rerank",
-            "代码",
-            "开源项目",
-        )
-        if any(self._compact_axis_text(marker) in key for marker in markers):
+        if any(self._compact_axis_text(marker) in key for marker in self.axis_lite_technical_axis_terms):
             return True
         if "数据库" not in key:
             return False
         query_key = self._compact_axis_text(getattr(query_plan, "query", ""))
-        technical_database_markers = (
-            "schema",
-            "端点",
-            "接口",
-            "代码",
-            "实现",
-            "导入",
-            "索引",
-            "查询",
-            "字段",
-            "表结构",
-            "迁移",
-            "sqlite",
-            "sql",
+        return any(
+            self._compact_axis_text(marker) in query_key
+            for marker in self.axis_lite_technical_database_terms
         )
-        return any(self._compact_axis_text(marker) in query_key for marker in technical_database_markers)
 
     def _axis_lite_node_has_technical_domain(self, node: dict) -> bool:
         if not isinstance(node, dict):
@@ -12914,23 +12966,10 @@ class GatewayService:
         domain_text = self._compact_axis_text(" ".join(str(item) for item in domains or []))
         if not domain_text:
             return False
-        markers = (
-            "projectcode",
-            "hardwareprotocol",
-            "hardware",
-            "code",
-            "debug",
-            "技术",
-            "技术计划",
-            "项目",
-            "工程",
-            "代码",
-            "硬件",
-            "协议",
-            "数据库",
-            "开发",
+        return any(
+            self._compact_axis_text(marker) in domain_text
+            for marker in self.axis_lite_technical_domain_terms
         )
-        return any(self._compact_axis_text(marker) in domain_text for marker in markers)
 
     def _axis_lite_node_name_matches_primary(self, query_plan: Any, node: dict) -> bool:
         groups = getattr(query_plan, "activated_axis_groups", ()) or ()

@@ -391,6 +391,54 @@ gateway:
   word_map_hint_moment_boost: 0.25   # weak moment-search boost for hinted buckets in graph retrieval mode
   word_map_hint_neighbor_limit: 6
   word_map_hint_bucket_limit: 12
+  axis_lite:
+    # Technical-axis guardrail terms. If these keys exist, they replace the built-in defaults.
+    # Used only to reject off-domain memories after recall candidates already exist.
+    technical_axis_terms:
+      - esp32
+      - mpr121
+      - sqlite
+      - 模块
+      - 硬件
+      - 接口
+      - 端点
+      - api
+      - gateway
+      - bridge
+      - mcp
+      - embedding
+      - rerank
+      - 代码
+      - 开源项目
+    technical_database_terms:
+      - schema
+      - 端点
+      - 接口
+      - 代码
+      - 实现
+      - 导入
+      - 索引
+      - 查询
+      - 字段
+      - 表结构
+      - 迁移
+      - sqlite
+      - sql
+    technical_domain_terms:
+      - projectcode
+      - hardwareprotocol
+      - hardware
+      - code
+      - debug
+      - 技术
+      - 技术计划
+      - 项目
+      - 工程
+      - 代码
+      - 硬件
+      - 协议
+      - 数据库
+      - 开发
   semantic_candidate_top_k: 50       # internal embedding candidate pool; visible injection stays gated
   moment_search_limit: 50            # internal moment candidate pool for graph retrieval
   recall_fusion_mode: dynamic        # dynamic | legacy; legacy uses the weights below as the main score

@@ -345,7 +345,7 @@ gateway:
   semantic_session_dedupe_enabled: true
   semantic_session_dedupe_threshold: 0.90
   semantic_session_dedupe_lexical_threshold: 0.82
-  inject_total_budget: 1200
+  inject_total_budget: 1800
   core_memory_budget: 0
   recent_context_budget: 300
   just_now_context_enabled: true     # 刚刚/刚才/上一句: use short-term conversation_turns, not long-term memory
@@ -361,7 +361,7 @@ gateway:
   date_persona_trace_budget: 220
   date_persona_trace_max_events: 5
   date_persona_trace_include_daily: true
-  recalled_memory_budget: 400
+  recalled_memory_budget: 900
   direct_render_mode: auto   # auto | compact | full; direct/recalled display shape
   retrieval_mode: graph       # graph | bucket; bucket skips moment graph diffusion
   portrait_memory_enabled: true  # read-only stable portrait cache from profile_fact by default

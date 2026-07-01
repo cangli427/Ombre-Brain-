@@ -763,10 +763,10 @@ class GatewayService:
             1.0,
         )
 
-        self.inject_total_budget = int(self.gateway_cfg.get("inject_total_budget", 1200))
+        self.inject_total_budget = int(self.gateway_cfg.get("inject_total_budget", 1800))
         self.core_budget = int(self.gateway_cfg.get("core_memory_budget", 500))
         self.recent_budget = int(self.gateway_cfg.get("recent_context_budget", 300))
-        self.recalled_budget = int(self.gateway_cfg.get("recalled_memory_budget", 400))
+        self.recalled_budget = int(self.gateway_cfg.get("recalled_memory_budget", 900))
         self.direct_render_mode = self._normalize_direct_render_mode(
             self.gateway_cfg.get("direct_render_mode", "auto")
         )

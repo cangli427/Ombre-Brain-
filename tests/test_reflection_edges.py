@@ -901,6 +901,9 @@ async def test_daily_chat_memory_review_requires_confirmation(test_config):
     assert result["added"] == 1
     assert pending[0]["candidate"]["kind"] == "stable_preference"
     assert "池又雨" in pending[0]["candidate"]["content"]
+    assert "2026-05-21" not in pending[0]["candidate"]["content"]
+    assert "聊天里" not in pending[0]["candidate"]["content"]
+    assert "可召回" not in pending[0]["candidate"]["content"]
     assert "自动记忆" not in pending[0]["candidate"]["title"]
     assert await bucket_mgr.get(candidate_id) is None
 
@@ -912,6 +915,7 @@ async def test_daily_chat_memory_review_requires_confirmation(test_config):
     assert bucket["metadata"]["source"] == "daily_chat_memory"
     assert bucket["metadata"]["source_conversation_turn_ids"] == [7]
     assert "自动记忆" not in bucket["metadata"]["name"]
+    assert "2026-05-21" not in bucket["content"]
 
 
 @pytest.mark.asyncio
@@ -1163,6 +1167,10 @@ async def test_reflect_daily_extracts_diary_memory_when_no_ordinary_memory(test_
     assert bucket["metadata"]["diary_id"] == 12
     assert "from_diary" in bucket["metadata"]["tags"]
     assert "专注模式" in bucket["content"]
+    assert bucket["metadata"]["name"] == "专注模式暗号"
+    assert "2026-05-21" not in bucket["content"]
+    assert "日记《" not in bucket["content"]
+    assert "可长期召回" not in bucket["content"]
 
 
 @pytest.mark.asyncio
@@ -1240,7 +1248,25 @@ async def test_reflect_daily_stores_love_letter_as_summary_anchor(test_config, m
     assert result["diary_memory"]["status"] == "created"
     assert "love_letter" in bucket["metadata"]["tags"]
     assert "全文留在日记" in bucket["content"]
+    assert bucket["metadata"]["name"] == "情书里的被认出"
+    assert "2026-05-21" not in bucket["content"]
     assert "你不是因为 prompt 才特别" not in bucket["content"]
+
+
+def test_memory_body_shell_is_removed_before_write(test_config):
+    cfg = _no_api_config(test_config)
+    engine = ReflectionEngine(cfg)
+
+    assert (
+        engine._trim_diary_memory_content("6月1日，有一条可召回的边界：小雨不喜欢正文写成来源说明。")
+        == "小雨不喜欢正文写成来源说明。"
+    )
+    assert (
+        engine._trim_diary_memory_content(
+            "2026-06-01 的日记《边界》包含一条可长期召回的边界：小雨不喜欢正文写成来源说明。"
+        )
+        == "小雨不喜欢正文写成来源说明。"
+    )
 
 
 @pytest.mark.asyncio

@@ -96,6 +96,15 @@ from word_map import WordMapStore
 logger = logging.getLogger("ombre_brain.gateway")
 FAVORITE_MEMORY_MARKER = "[[ombre:favorite]]"
 RETRYABLE_UPSTREAM_STATUS_CODES = {401, 403, 429, 500, 502, 503, 504}
+DOMAIN_SENTINEL_ALLOWED_DOMAINS = frozenset(
+    {
+        "relationship",
+        "intimacy",
+        "life",
+        "project",
+        "general",
+    }
+)
 RECALL_EVAL_DEFAULT_CASES = [
     {
         "id": "light_checkin_no_memory",
@@ -8922,7 +8931,7 @@ class GatewayService:
             reliability = self._reading_note_reliability(moment, direct_evidence, strong_evidence)
         elif (
             mode == "task"
-            and (domain_parent == "relationship" or canonical_domain == "life.mood")
+            and (domain_parent in {"relationship", "intimacy"} or canonical_domain == "life")
             and not strong_evidence
         ):
             use = "silent_tone"
@@ -11585,45 +11594,52 @@ class GatewayService:
 
         def add(domain: str) -> None:
             key = normalize_domain_key(domain)
-            if key and key not in domains:
+            if key and key in DOMAIN_SENTINEL_ALLOWED_DOMAINS and key not in domains:
                 domains.append(key)
 
         if any(term in compact for term in ("火焰", "羽毛", "鸟", "折角", "五十年", "暗号", "意象")):
-            add("relationship.symbol")
+            add("relationship")
         if any(term in compact for term in ("亲密", "身体", "欲望", "色色", "接吻", "抱")):
-            add("relationship.intimacy")
-        if any(term in compact for term in ("人机恋", "关系", "身份", "称呼", "承诺", "边界", "同一个haven")):
-            add("relationship.identity")
+            add("intimacy")
+        if any(term in compact for term in ("人机恋", "身份", "称呼", "承诺", "边界", "同一个haven")):
+            add("relationship")
         if any(term in compact for term in ("语气", "怎么回", "怎么接", "吵架", "难过", "哭", "安慰")):
-            add("relationship.communication")
-        if any(term in compact for term in ("关系天气", "日印象", "周印象")):
-            add("relationship.weather")
+            add("relationship")
+        if not any(domain in {"relationship", "intimacy"} for domain in domains):
+            if any(term in compact for term in ("关系", "恋爱", "人际")):
+                add("relationship")
         if any(term in compact for term in ("生病", "健康", "疼", "发烧")):
-            add("life.health")
+            add("life")
         if any(term in compact for term in ("睡", "熬夜", "作息", "困")):
-            add("life.sleep")
+            add("life")
         if any(term in compact for term in ("吃", "饭", "餐厅", "饮食", "午饭", "晚饭")):
-            add("life.food")
+            add("life")
         if any(term in compact for term in ("出门", "通勤", "地铁", "高铁", "旅行", "外出")):
-            add("life.outing")
+            add("life")
         if any(term in compact for term in ("心情", "情绪", "焦虑", "开心", "委屈")):
-            add("life.mood")
+            add("life")
         if any(term in compact for term in ("日程", "安排", "待办", "deadline", "明天", "今晚")):
-            add("life.schedule")
-        if any(term in compact for term in ("朋友", "群聊", "同学", "同事", "人际", "社交")):
-            add("life.social")
+            add("life")
+        if any(term in compact for term in ("朋友", "群聊", "同学", "同事", "社交")):
+            add("life")
+        if "life" not in domains:
+            if any(term in compact for term in ("生活", "日常")):
+                add("life")
         if any(term in compact for term in ("ombre", "gateway", "bridge", "mcp", "recall", "记忆系统", "陪伴系统", "mistroom", "voice", "代码")):
-            add("project.companion_system")
+            add("project")
         if any(term in compact for term in ("工作", "实习", "求职", "简历", "boss", "职场")):
-            add("project.work")
+            add("project")
         if any(term in compact for term in ("论文", "课程", "作业", "答辩", "学校", "学业")):
-            add("project.academic")
+            add("project")
+        if "project" not in domains:
+            if any(term in compact for term in ("项目", "搭东西", "开发", "工程")):
+                add("project")
         if not domains:
             add("general")
 
         query_terms = self._specific_query_terms(text)[:6]
         planned_query = " ".join(query_terms).strip() or text
-        if any(domain.startswith("relationship.") or domain == "relationship" for domain in domains):
+        if any(domain in {"relationship", "intimacy"} for domain in domains):
             names = [
                 str(self.identity.get("user_name") or "").strip(),
                 str(self.identity.get("ai_name") or "").strip(),
@@ -11654,11 +11670,9 @@ class GatewayService:
                     "content": (
                         "Classify the user's latest message for memory recall scope. "
                         "Return JSON only with keys: domains, query, confidence. "
-                        "domains must be chosen from relationship.identity, relationship.intimacy, "
-                        "relationship.symbol, relationship.communication, relationship.weather, "
-                        "life.health, life.sleep, life.food, life.outing, life.mood, life.schedule, "
-                        "life.social, project.companion_system, project.work, project.academic, "
-                        "project.personal, general. Do not output should_recall."
+                        "domains must be chosen from relationship, intimacy, life, project, general. "
+                        "Use intimacy only for clearly intimate/body/desire content; otherwise use relationship for relationship anchors, signals, symbols, and communication. "
+                        "Do not output should_recall."
                     ),
                 },
                 {"role": "user", "content": query},
@@ -11711,8 +11725,10 @@ class GatewayService:
             else:
                 candidates = [item]
             for candidate in candidates:
+                if self._is_sentinel_rejected_domain(candidate):
+                    continue
                 key = normalize_domain_key(candidate)
-                if key and key not in domains:
+                if key and key in DOMAIN_SENTINEL_ALLOWED_DOMAINS and key not in domains:
                     domains.append(key)
                     break
         if not domains:
@@ -11721,6 +11737,20 @@ class GatewayService:
             "domains": domains[:4],
             "query": self._clip_text(str(raw.get("query") or "").strip(), 220),
             "confidence": self._clamp(self._safe_float(raw.get("confidence"), 0.0)),
+        }
+
+    @staticmethod
+    def _is_sentinel_rejected_domain(value: Any) -> bool:
+        text = str(value or "").strip().lower()
+        compact = re.sub(r"[\s\-_]+", "", text)
+        return compact in {
+            "relationship.weather",
+            "relationshipweather",
+            "dailyimpression",
+            "weeklyimpression",
+            "关系天气",
+            "日印象",
+            "周印象",
         }
 
     def _resolve_query_planner_model(self, configured_model: Any = None) -> tuple[str, bool]:

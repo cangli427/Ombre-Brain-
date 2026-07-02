@@ -219,22 +219,10 @@ recall:
 domain_taxonomy:
   display_language: zh
   domains:
-    - { key: "relationship.identity", label_zh: "关系身份" }
-    - { key: "relationship.intimacy", label_zh: "亲密" }
-    - { key: "relationship.symbol", label_zh: "暗号意象" }
-    - { key: "relationship.communication", label_zh: "沟通方式" }
-    - { key: "relationship.weather", label_zh: "关系天气" }
-    - { key: "life.health", label_zh: "健康" }
-    - { key: "life.sleep", label_zh: "睡眠" }
-    - { key: "life.food", label_zh: "饮食" }
-    - { key: "life.outing", label_zh: "出行" }
-    - { key: "life.mood", label_zh: "心情" }
-    - { key: "life.schedule", label_zh: "日程" }
-    - { key: "life.social", label_zh: "现实人际" }
-    - { key: "project.companion_system", label_zh: "我们的项目" }
-    - { key: "project.work", label_zh: "工作" }
-    - { key: "project.academic", label_zh: "学业" }
-    - { key: "project.personal", label_zh: "个人项目" }
+    - { key: "relationship", label_zh: "关系" }
+    - { key: "intimacy", label_zh: "亲密" }
+    - { key: "life", label_zh: "生活" }
+    - { key: "project", label_zh: "项目" }
     - { key: "general", label_zh: "通用" }
 
 # --- Word Map Lite / 派生词图 ---

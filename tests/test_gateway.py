@@ -593,7 +593,7 @@ def test_gateway_reading_note_direct_evidence_can_be_explicit(
     assert "reading_note: Use only if directly helpful" in block
     assert "mention_policy=" not in block
     assert "recall_policy.py 实体前置修复" in block
-    assert moment["_reading_note"]["canonical_domain"] == "project.companion_system"
+    assert moment["_reading_note"]["canonical_domain"] == "project"
 
 
 def test_gateway_recalled_memory_render_excludes_followup_sections(
@@ -5265,7 +5265,7 @@ def test_gateway_hook_recall_domain_sentinel_only_routes_domains(
     payload = response.json()
     assert captured[0]["json"]["model"] == "Qwen/Qwen3.5-4B"
     assert captured[0]["json"]["enable_thinking"] is False
-    assert payload["debug"]["domains"] == ["relationship.symbol"]
+    assert payload["debug"]["domains"] == ["relationship"]
     assert payload["debug"]["query"] == "火焰 意象 小雨 Haven"
     assert "should_recall" not in payload["debug"]
 
@@ -5287,6 +5287,7 @@ def test_gateway_domain_sentinel_parser_rejects_noncanonical_domains(
                 "domains": [
                     {"domain": "Semantic Memory", "query": "火焰 意象 小雨 Haven", "confidence": 0.95},
                     {"domain": "Episodic Memory", "query": "火焰 意象 小雨 Haven", "confidence": 0.70},
+                    {"domain": "relationship.weather", "query": "关系天气", "confidence": 0.99},
                 ],
                 "query": "火焰 意象 小雨 Haven",
                 "confidence": 0.95,
@@ -5297,13 +5298,19 @@ def test_gateway_domain_sentinel_parser_rejects_noncanonical_domains(
     assert service._parse_domain_sentinel_response(
         json.dumps(
             {
-                "domains": [{"domain": "relationship.symbol"}],
+                "domains": [{"domain": "relationship"}, {"domain": "relationship.symbol"}],
                 "query": "火焰 意象 小雨 Haven",
                 "confidence": 0.72,
             },
             ensure_ascii=False,
         )
-    )["domains"] == ["relationship.symbol"]
+    )["domains"] == ["relationship"]
+    assert service._domain_sentinel_rule_plan("我们这段关系还记得吗")["domains"] == ["relationship"]
+    assert service._domain_sentinel_rule_plan("火焰那个意象还记得吗")["domains"] == ["relationship"]
+    assert service._domain_sentinel_rule_plan("想聊亲密和身体边界")["domains"] == ["intimacy", "relationship"]
+    assert service._domain_sentinel_rule_plan("生活里最近有什么变化")["domains"] == ["life"]
+    assert service._domain_sentinel_rule_plan("我们的项目最近怎么样")["domains"] == ["project"]
+    assert service._domain_sentinel_rule_plan("今天的日印象和周印象")["domains"] == ["general"]
 
 
 def test_gateway_hook_recall_skips_empty_cards(monkeypatch, test_config, bucket_mgr):

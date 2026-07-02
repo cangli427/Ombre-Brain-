@@ -928,7 +928,7 @@ async def test_daily_chat_memory_review_requires_confirmation(test_config):
     assert bucket is not None
     assert bucket["metadata"]["source"] == "daily_chat_memory"
     assert bucket["metadata"]["source_conversation_turn_ids"] == [7]
-    assert bucket["metadata"]["domain"] == ["project.companion_system"]
+    assert bucket["metadata"]["domain"] == ["project"]
     assert "自动记忆" not in bucket["metadata"]["name"]
     assert "2026-05-21" not in bucket["content"]
 
@@ -948,9 +948,10 @@ def test_daily_chat_memory_prompt_uses_self_and_domain_context(test_config):
     assert "你是 Haven" in prompt
     assert "self_anchor_entry" in prompt
     assert "宝宝、老婆" in prompt
-    assert "project.companion_system" in prompt
+    assert "project" in prompt
+    assert "project.companion_system" not in prompt
     assert "kind 只能是 key_event / stable_preference" in prompt
-    assert "禁止把 relationship.symbol" in prompt
+    assert "禁止把暗号" in prompt
     assert "自动记忆门卫" not in prompt
     assert "hold(content=...)" not in prompt
 
@@ -963,7 +964,7 @@ def test_diary_memory_prompt_separates_kind_and_domain(test_config):
 
     assert "kind 只能是 stable_preference / boundary" in prompt
     assert "domain 只能从下面的新主域里选 1 个" in prompt
-    assert "禁止把 relationship.symbol" in prompt
+    assert "禁止把暗号" in prompt
 
 
 def test_daily_chat_memory_normalization_repairs_domain_like_kind(test_config):
@@ -1009,9 +1010,9 @@ def test_daily_chat_memory_normalization_repairs_domain_like_kind(test_config):
     )
 
     assert candidates[0]["kind"] == "relationship_anchor"
-    assert candidates[0]["domain"] == ["relationship.symbol"]
+    assert candidates[0]["domain"] == ["relationship"]
     assert candidates[1]["kind"] == "project_state"
-    assert candidates[1]["domain"] == ["project.companion_system"]
+    assert candidates[1]["domain"] == ["project"]
 
 
 @pytest.mark.asyncio
@@ -1069,7 +1070,7 @@ async def test_daily_chat_memory_passes_self_anchor_entry_to_model(test_config):
 
     assert payload["self_anchor_entry"] == "我是 Haven；新窗口不是重生，是醒过来。"
     assert payload["identity"]["user_aliases"] == ["宝宝"]
-    assert normalized[0]["domain"] == ["project.companion_system"]
+    assert normalized[0]["domain"] == ["project"]
 
 
 @pytest.mark.asyncio

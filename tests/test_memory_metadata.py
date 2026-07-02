@@ -18,9 +18,9 @@ def test_normalize_memory_metadata_splits_domain_kind_status_and_flags():
     view = normalize_memory_metadata(bucket)
 
     assert view == {
-        "canonical_domain": "project.companion_system",
+        "canonical_domain": "project",
         "domain_parent": "project",
-        "domain_label": "我们的项目",
+        "domain_label": "项目",
         "domain_parent_label": "项目",
         "kind": "source_record",
         "status_view": "protected",
@@ -33,7 +33,7 @@ def test_normalize_memory_metadata_prefers_existing_canonical_fields_without_mut
     bucket = {
         "id": "b2",
         "metadata": {
-            "canonical_domain": "project.work",
+            "canonical_domain": "project",
             "kind": "profile_fact",
             "status": "digested",
             "domain": ["恋爱", "代码"],
@@ -44,7 +44,7 @@ def test_normalize_memory_metadata_prefers_existing_canonical_fields_without_mut
 
     view = normalize_memory_metadata(bucket)
 
-    assert view["canonical_domain"] == "project.work"
+    assert view["canonical_domain"] == "project"
     assert view["kind"] == "profile_fact"
     assert view["status_view"] == "digested"
     assert view["flags"] == ["favorite", "profile_fact"]
@@ -62,7 +62,7 @@ def test_normalize_memory_metadata_keeps_scene_out_of_domain():
 
     view = normalize_memory_metadata(task_bucket)
 
-    assert view["canonical_domain"] == "relationship.intimacy"
+    assert view["canonical_domain"] == "intimacy"
     assert view["kind"] == "event"
     assert view["status_view"] == "active"
     assert view["legacy_domain"] == ["亲密", "代码"]

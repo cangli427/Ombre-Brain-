@@ -2185,6 +2185,41 @@ class ReflectionEngine:
                 item["candidate"] = cleaned
                 changed = True
             refreshed.append(item)
+        kept_candidates: list[dict] = []
+        pending_indexes = [
+            index
+            for index, item in enumerate(refreshed)
+            if str(item.get("status") or "") == "pending" and isinstance(item.get("candidate"), dict)
+        ]
+        pending_indexes.sort(
+            key=lambda index: str(refreshed[index].get("created_at") or ""),
+            reverse=True,
+        )
+        for index in pending_indexes:
+            item = refreshed[index]
+            candidate = item.get("candidate") or {}
+            candidate_tags = self._string_list(candidate.get("tags"), limit=8)
+            content = str(candidate.get("content") or "")
+            kind = self._normalize_auto_memory_kind(
+                candidate.get("kind"),
+                content=content,
+                tags=candidate_tags,
+            )
+            should_reject = False
+            reject_reason = ""
+            if kind and self._daily_chat_memory_low_value_social_noise(content, kind):
+                should_reject = True
+                reject_reason = "auto_cleaned_low_value_social"
+            elif self._daily_chat_memory_duplicate_candidate(candidate, kept_candidates):
+                should_reject = True
+                reject_reason = "auto_cleaned_duplicate"
+            if should_reject:
+                item["status"] = "rejected"
+                item["rejected_at"] = item.get("rejected_at") or datetime.now(timezone.utc).isoformat(timespec="seconds")
+                item["reject_reason"] = reject_reason
+                changed = True
+                continue
+            kept_candidates.append(candidate)
         return refreshed, changed
 
     def _clean_daily_chat_memory_candidate(self, candidate: dict, key: str) -> dict:

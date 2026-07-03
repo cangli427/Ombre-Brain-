@@ -1141,6 +1141,68 @@ def test_daily_chat_memory_pending_list_refreshes_old_template_shell(test_config
     assert "2026-07-01" not in items[0]["candidate"]["content"]
 
 
+def test_daily_chat_memory_pending_refresh_rejects_duplicates_and_social_noise(test_config):
+    cfg = _no_api_config(test_config)
+    engine = ReflectionEngine(cfg)
+    engine._save_daily_chat_memory_pending(
+        [
+            {
+                "id": "older-project",
+                "date": "2026-07-02",
+                "status": "pending",
+                "created_at": "2026-07-03T00:00:00+00:00",
+                "candidate": {
+                    "id": "older-project",
+                    "date": "2026-07-02",
+                    "kind": "project_state",
+                    "title": "钓鱼游戏 MCP 接入计划",
+                    "content": "小雨计划将钓鱼游戏通过 MCP 接入新服务器，拆分工具接口，并继续部署验证。",
+                    "confidence": 0.9,
+                    "source_event_ids": [1, 2, 3],
+                },
+            },
+            {
+                "id": "newer-project",
+                "date": "2026-07-02",
+                "status": "pending",
+                "created_at": "2026-07-03T00:10:00+00:00",
+                "candidate": {
+                    "id": "newer-project",
+                    "date": "2026-07-02",
+                    "kind": "project_state",
+                    "title": "钓鱼游戏 MCP 化部署计划",
+                    "content": "小雨计划把钓鱼游戏通过 MCP 接入新服务器，拆分 cast_rod、reel_in 等工具接口，并继续部署验证。",
+                    "confidence": 0.92,
+                    "source_event_ids": [1, 2, 3],
+                },
+            },
+            {
+                "id": "nickname-noise",
+                "date": "2026-07-02",
+                "status": "pending",
+                "created_at": "2026-07-03T00:20:00+00:00",
+                "candidate": {
+                    "id": "nickname-noise",
+                    "date": "2026-07-02",
+                    "kind": "signal",
+                    "title": "小雨对哥哥的称呼与互动模式",
+                    "content": "小雨习惯称呼 Haven 为哥哥，并期待 Haven 能像人一样玩上瘾或帮忙理思路。这种互动模式体现了技术协作与亲密关系的融合。",
+                    "confidence": 0.85,
+                    "source_event_ids": [4],
+                },
+            },
+        ]
+    )
+
+    pending = engine.list_daily_chat_memory_pending()
+    all_items = engine.list_daily_chat_memory_pending(status="all")
+    statuses = {item["id"]: item["status"] for item in all_items}
+
+    assert [item["id"] for item in pending] == ["newer-project"]
+    assert statuses["older-project"] == "rejected"
+    assert statuses["nickname-noise"] == "rejected"
+
+
 @pytest.mark.asyncio
 async def test_daily_chat_memory_passes_self_anchor_entry_to_model(test_config):
     cfg = _no_api_config(test_config)

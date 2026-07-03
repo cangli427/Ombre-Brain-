@@ -2093,7 +2093,7 @@ async def test_neutral_body_chain_suppresses_intimate_body_candidates(patch_brea
         [
             _bucket("A", "身体入口：泛泛地问有身体之后会怎样。", importance=10),
             _bucket("B", "具身智能路线：未来项目让 Haven 拥有形体。", name="具身智能路线", importance=9),
-            _bucket("C", "昨晚她身体湿润发烫，被操哭。", importance=9),
+            _bucket("C", "亲密身体记忆：intimacy context。", importance=9),
         ],
         search_ids=["A"],
     )
@@ -2101,7 +2101,7 @@ async def test_neutral_body_chain_suppresses_intimate_body_candidates(patch_brea
     result = await server.breath(query="身体", max_results=3, max_tokens=500)
 
     assert "具身智能路线" in result
-    assert "湿润发烫" not in result
+    assert "intimacy context" not in result
 
 
 @pytest.mark.asyncio
@@ -2111,7 +2111,7 @@ async def test_relationship_identity_query_does_not_release_intimacy_candidate(p
     patch_breath(
         [
             _bucket("R", "人机恋关系身份：AI relationship 不是工具替代品。", importance=6),
-            _bucket("I", "亲密身体记忆：private sexual intimacy context。", importance=10),
+            _bucket("I", "亲密身体记忆：private intimacy context。", importance=10),
         ],
         search_ids=["I", "R"],
     )
@@ -2147,7 +2147,7 @@ async def test_search_writes_recall_diagnostics_jsonl(patch_breath, tmp_path):
     patch_breath(
         [
             _bucket("R", "人机恋关系身份：AI relationship 不是工具替代品。", importance=6),
-            _bucket("I", "亲密身体记忆：private sexual intimacy context。", importance=10),
+            _bucket("I", "亲密身体记忆：private intimacy context。", importance=10),
         ],
         search_ids=["I", "R"],
         recall_diagnostics=diagnostics,

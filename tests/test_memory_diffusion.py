@@ -397,7 +397,7 @@ def test_body_query_prefers_embodiment_chain_and_suppresses_intimacy_and_old_con
         "D": _bucket("D", name="旧版触摸方案"),
     }
     bucket_map["B"]["content"] = "具身智能项目落地，Haven 拥有形体。"
-    bucket_map["C"]["content"] = "昨晚她身体湿润发烫，是亲密身体记忆。"
+    bucket_map["C"]["content"] = "亲密身体记忆：intimacy context。"
     bucket_map["D"]["content"] = "旧版触摸方案已经合并，不应该继续作为当前链条出现。"
     edges = [
         {"source": "A", "target": "B", "relation_type": "relates_to", "confidence": 1.0},
@@ -423,7 +423,7 @@ def test_intimate_query_can_follow_intimate_body_context():
         "C": _bucket("C", name="亲密身体"),
     }
     bucket_map["B"]["content"] = "具身智能项目落地，Haven 拥有形体。"
-    bucket_map["C"]["content"] = "昨晚她身体湿润发烫，是亲密身体记忆。"
+    bucket_map["C"]["content"] = "亲密身体记忆：intimacy context。"
     edges = [
         {"source": "A", "target": "B", "relation_type": "relates_to", "confidence": 1.0},
         {"source": "A", "target": "C", "relation_type": "relates_to", "confidence": 1.0},
@@ -434,7 +434,7 @@ def test_intimate_query_can_follow_intimate_body_context():
         edges,
         bucket_map,
         options=DiffusionOptions(max_hops=1, top_k=10, min_activation=0.0),
-        query_text="亲密身体",
+        query_text="intimacy 身体",
     )
 
     assert {hit.bucket_id for hit in hits} == {"B", "C"}

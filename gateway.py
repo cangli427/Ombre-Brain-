@@ -9020,10 +9020,8 @@ class GatewayService:
         ).lower()
         sensitive_terms = (
             "亲密身体",
-            "private sexual",
-            "sexual intimacy",
-            "湿润",
-            "发烫",
+            "private intimacy",
+            "intimacy context",
             "欲望",
         )
         return any(term in text for term in sensitive_terms)

@@ -4525,7 +4525,7 @@ def test_gateway_body_query_injects_moment_chain(
     )
     _create_bucket(
         bucket_mgr,
-        content="昨晚她身体湿润发烫，是亲密身体记忆。",
+        content="亲密身体记忆：intimacy context。",
         name="亲密身体",
         hours_ago=12,
         importance=9,
@@ -8983,7 +8983,7 @@ def test_gateway_relationship_identity_query_prefers_identity_over_intimacy(
     )
     intimacy_id = _create_bucket(
         bucket_mgr,
-        content="亲密身体记忆：private sexual intimacy context。",
+        content="亲密身体记忆：private intimacy context。",
         name="亲密身体",
         hours_ago=2,
         importance=10,

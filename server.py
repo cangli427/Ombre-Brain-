@@ -122,11 +122,11 @@ from portrait_engine import DailyPortraitMaintainer
 from raw_events import RawEventStore
 from reflection_engine import ReflectionEngine
 from recall_diagnostics import RecallDiagnosticsLogger
+from reminder_store import ReminderStore
 from reranker_engine import RerankerEngine
 from self_anchor import SELF_ANCHOR_TAG, is_self_anchor_bucket, is_self_anchor_metadata
 from scripts.migrate_affect_anchor_sections import plan_bucket_migration
 from source_refs import source_ref_window
-from todo_store import TodoStore
 from word_map import WordMapStore, reflection_identity_terms
 from utils import (
     bucket_content_for_recall,
@@ -179,7 +179,7 @@ word_map_store = WordMapStore(config)                   # Derived generic word c
 darkroom_store = DarkroomStore(config)                  # Private reflection room / 不回显正文的暗房
 gateway_state_store = GatewayStateStore(os.path.join(config["buckets_dir"], "gateway_state.db"))
 raw_event_store = RawEventStore(config)                  # Raw dialogue archive / 原文保险箱
-todo_store = TodoStore(config)                            # Followup/todo derived state / 待办派生状态
+reminder_store = ReminderStore(config)                    # Standalone care memos / 独立照顾备忘
 
 # --- Create MCP server instance / 创建 MCP 服务器实例 ---
 # host="0.0.0.0" so Docker container's SSE is externally reachable
@@ -1580,15 +1580,15 @@ async def _build_handoff_breath(max_tokens: int = 1200, session_id: str = "", de
         )
     if not recent_continuity:
         recent_continuity = _format_handoff_recent_continuity(all_buckets, limit=3)
-    pending_followups = _format_pending_followups(all_buckets, limit=3)
     self_anchor = _format_handoff_self_anchor(all_buckets, limit=1)
     anchors = _format_handoff_anchors(all_buckets, limit=2)
+    care_memos = _format_handoff_care_memos(session_id=session_id, limit=3)
 
     self_anchor = _trim_text_to_token_budget(self_anchor, 220)
     user_portrait = _trim_text_to_token_budget(user_portrait, 220)
     relationship_portrait = _trim_text_to_token_budget(relationship_portrait, 240)
     recent_continuity = _trim_lines_to_token_budget(recent_continuity, 650)
-    pending_followups = _trim_lines_to_token_budget(pending_followups, 260)
+    care_memos = _trim_lines_to_token_budget(care_memos, 180)
     anchors = _trim_text_to_token_budget(anchors, 220)
 
     sections = [
@@ -1604,7 +1604,7 @@ async def _build_handoff_breath(max_tokens: int = 1200, session_id: str = "", de
             or "No maintained relationship portrait is available yet.",
         ),
         ("Recent Continuity", recent_continuity),
-        ("Pending Followups", pending_followups),
+        ("照顾备忘", care_memos),
         ("Optional Anchors", anchors),
     ]
     parts = [
@@ -1773,266 +1773,6 @@ def _breath_query_requests_pending_followups(query: str) -> bool:
     return any(term in text for term in ("todo", "pending", "unfinished", "followup", "follow-up"))
 
 
-def _normalize_todo_item_text(text: str) -> str:
-    item = str(text or "").strip()
-    item = re.sub(r"^\s*(?:[-*+]\s*)?(?:\[[ xX]\]\s*)?", "", item).strip()
-    return item
-
-
-def _todo_item_is_done(text: str) -> bool:
-    return bool(
-        re.match(
-            r"^\s*(?:[-*+]\s*)?(?:\[done(?:\s|\])|\[x\])",
-            str(text or ""),
-            flags=re.I,
-        )
-    )
-
-
-def _pending_followup_items(text: str) -> list[str]:
-    items = []
-    seen = set()
-    for raw_line in str(text or "").splitlines():
-        if _todo_item_is_done(raw_line):
-            continue
-        item = _normalize_todo_item_text(raw_line)
-        if not item:
-            continue
-        key = re.sub(r"\s+", " ", item).strip().lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        items.append(item)
-    return items
-
-
-def _todo_source_hash(bucket_id: str, moment_id: str, text: str) -> str:
-    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
-    payload = f"{bucket_id}\0{moment_id}\0{normalized}"
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
-
-
-def _todo_id(bucket_id: str, moment_id: str, text: str) -> str:
-    return _todo_source_hash(bucket_id, moment_id, text)[:20]
-
-
-def _pending_followup_source_entries(all_buckets: list[dict]) -> list[dict]:
-    rows = []
-    for bucket in all_buckets or []:
-        if not isinstance(bucket, dict) or is_self_anchor_bucket(bucket):
-            continue
-        meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
-        if meta.get("type") == "feel":
-            continue
-        if meta.get("active") is False or meta.get("deprecated"):
-            continue
-        if meta.get("resolved") or meta.get("digested") or meta.get("type") == "archived":
-            continue
-        bucket_id = str(bucket.get("id") or "")
-        if not bucket_id:
-            continue
-        for moment in parse_bucket_moments(bucket):
-            if str(moment.get("section") or "") != "followup":
-                continue
-            moment_id = str(moment.get("moment_id") or "")
-            for item in _pending_followup_items(moment.get("text") or ""):
-                rows.append(
-                    {
-                        "id": _todo_id(bucket_id, moment_id, item),
-                        "bucket_id": bucket_id,
-                        "moment_id": moment_id,
-                        "section": "followup",
-                        "source_hash": _todo_source_hash(bucket_id, moment_id, item),
-                        "title": str(meta.get("name") or bucket_id).strip(),
-                        "date": _bucket_handoff_date(bucket) or str(meta.get("created") or "")[:10],
-                        "updated": str(meta.get("updated_at") or meta.get("last_active") or meta.get("created") or ""),
-                        "text": item,
-                    }
-                )
-    rows.sort(key=lambda item: (item.get("updated") or "", item.get("date") or ""), reverse=True)
-    return rows
-
-
-def _sync_pending_followups(all_buckets: list[dict]) -> None:
-    todo_store.sync_from_entries(_pending_followup_source_entries(all_buckets))
-
-
-def _pending_followup_entries(all_buckets: list[dict], limit: int = 5) -> list[dict]:
-    _sync_pending_followups(all_buckets)
-    safe_limit = max(0, int(limit or 0))
-    if safe_limit <= 0:
-        return []
-    return todo_store.list(status="open", limit=safe_limit)
-
-
-def _format_pending_followups(all_buckets: list[dict], limit: int = 5, max_chars: int = 180) -> str:
-    lines = []
-    for entry in _pending_followup_entries(all_buckets, limit=limit):
-        date = entry.get("date") or "recent"
-        bucket_id = entry.get("bucket_id") or entry.get("source_bucket_id") or ""
-        moment_id = entry.get("moment_id") or entry.get("source_moment_id") or ""
-        title = entry.get("title") or bucket_id or "memory"
-        text = _clip_text(entry.get("text") or "", max_chars)
-        if not text:
-            continue
-        moment_part = f" [moment_id:{moment_id}]" if moment_id else ""
-        lines.append(
-            f"- [{date}] [bucket_id:{bucket_id}]{moment_part} {title}: {text}"
-        )
-    return "\n".join(lines)
-
-
-async def _sync_todos_from_buckets(include_archive: bool = False) -> None:
-    all_buckets = await bucket_mgr.list_all(include_archive=include_archive)
-    _sync_pending_followups(all_buckets)
-
-
-def _followup_log_date(resolved_at: str | None) -> str:
-    raw = str(resolved_at or "").strip()
-    if re.match(r"^\d{4}-\d{2}-\d{2}", raw):
-        return raw[:10]
-    return "date_unknown"
-
-
-def _markdown_section_name(line: str) -> str:
-    match = re.match(r"^\s*#{2,6}\s+(.+?)\s*$", str(line or ""))
-    if not match:
-        return ""
-    heading = match.group(1).strip().lower()
-    heading = re.split(r"[:：(/|\s]", heading, maxsplit=1)[0].strip()
-    return re.sub(r"[\s_\-]+", "_", heading)
-
-
-def _is_followup_section_name(name: str) -> bool:
-    return name in {
-        "followup",
-        "followups",
-        "follow_up",
-        "todo",
-        "to_do",
-        "next",
-        "后续",
-        "后续待办",
-        "待办",
-        "待办事项",
-    }
-
-
-def _is_followup_log_section_name(name: str) -> bool:
-    return name in {"followup_log", "followups_log", "todo_log", "done_followup", "done_todo"}
-
-
-def _split_bucket_markdown_sections(content: str) -> list[dict]:
-    lines = str(content or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    sections = []
-    current = {"heading": "", "heading_name": "", "lines": []}
-    for line in lines:
-        heading_name = _markdown_section_name(line)
-        if heading_name:
-            sections.append(current)
-            current = {"heading": line, "heading_name": heading_name, "lines": []}
-        else:
-            current["lines"].append(line)
-    sections.append(current)
-    return [section for section in sections if section["heading"] or any(str(line).strip() for line in section["lines"])]
-
-
-def _render_bucket_markdown_sections(sections: list[dict]) -> str:
-    chunks = []
-    for section in sections:
-        lines = []
-        heading = str(section.get("heading") or "").rstrip()
-        if heading:
-            lines.append(heading)
-        lines.extend(str(line).rstrip() for line in section.get("lines", []))
-        chunk = "\n".join(lines).strip()
-        if chunk:
-            chunks.append(chunk)
-    return "\n\n".join(chunks).strip()
-
-
-def _writeback_completed_followup_content(content: str, todo_text: str, resolved_at: str | None) -> tuple[str, bool]:
-    target = _normalize_todo_item_text(todo_text)
-    if not target:
-        return str(content or ""), False
-    done_line = f"[done {_followup_log_date(resolved_at)}] {target}"
-    sections = _split_bucket_markdown_sections(content)
-    changed = False
-    rendered = []
-    log_section = None
-
-    for section in sections:
-        heading_name = str(section.get("heading_name") or "")
-        if _is_followup_log_section_name(heading_name):
-            log_section = section
-            rendered.append(section)
-            continue
-        if not _is_followup_section_name(heading_name):
-            rendered.append(section)
-            continue
-
-        kept_lines = []
-        for line in section.get("lines", []):
-            if _normalize_todo_item_text(line) == target:
-                changed = True
-                continue
-            kept_lines.append(line)
-        if any(str(line).strip() for line in kept_lines):
-            section = {**section, "lines": kept_lines}
-            rendered.append(section)
-
-    if log_section is None:
-        rendered.append({"heading": "### followup_log", "heading_name": "followup_log", "lines": [done_line]})
-        changed = True
-    else:
-        existing = {_normalize_todo_item_text(line) for line in log_section.get("lines", [])}
-        if _normalize_todo_item_text(done_line) not in existing:
-            log_section.setdefault("lines", []).append(done_line)
-            changed = True
-
-    return _render_bucket_markdown_sections(rendered), changed
-
-
-async def _writeback_completed_todo(todo_id: str) -> dict:
-    todo = todo_store.get(todo_id)
-    if not todo:
-        return {"status": "not_found", "reason": "todo_not_found"}
-    if todo.get("status") != "done":
-        return {"status": "skipped", "reason": "todo_not_done", "todo": todo}
-    bucket_id = str(todo.get("source_bucket_id") or "")
-    if not bucket_id or not MEMORY_ID_RE.fullmatch(bucket_id):
-        return {"status": "failed", "reason": "invalid_bucket_id", "todo": todo}
-    bucket = await bucket_mgr.get(bucket_id)
-    if not bucket:
-        return {"status": "not_found", "reason": "bucket_not_found", "todo": todo}
-    new_content, changed = _writeback_completed_followup_content(
-        bucket.get("content", ""),
-        todo.get("text", ""),
-        todo.get("resolved_at") or todo.get("updated_at") or now_iso(),
-    )
-    embedding_queued = False
-    if changed:
-        meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
-        ok = await bucket_mgr.update(
-            bucket_id,
-            content=new_content,
-            last_active=meta.get("last_active") or meta.get("created"),
-            updated_at=meta.get("updated_at") or meta.get("created") or now_iso(),
-        )
-        if not ok:
-            return {"status": "failed", "reason": "bucket_update_failed", "todo": todo}
-        updated_bucket = await bucket_mgr.get(bucket_id)
-        embedding_queued = _queue_embedding_refresh_if_changed(bucket_id, bucket, updated_bucket)
-    written = todo_store.mark_writeback(todo_id)
-    return {
-        "status": "written" if changed else "unchanged",
-        "id": todo_id,
-        "bucket_id": bucket_id,
-        "embedding_queued": embedding_queued,
-        "todo": written or todo,
-    }
-
-
 def _format_handoff_personal_recent_continuity(all_buckets: list[dict], limit: int = 3) -> str:
     rows = []
     recent_dates = _handoff_recent_date_keys()
@@ -2176,6 +1916,33 @@ def _format_handoff_anchors(all_buckets: list[dict], limit: int = 2) -> str:
         suffix = f"；{hint}" if hint else ""
         lines.append(f"- [bucket_id:{bucket.get('id', '')}] {title}: {text}{suffix}")
     return "\n".join(lines)
+
+
+def _format_handoff_care_memos(session_id: str = "", limit: int = 3) -> str:
+    try:
+        items = reminder_store.list(status="active", limit=50)
+    except Exception as exc:
+        logger.warning("Handoff care memo lookup failed / handoff 照顾备忘读取失败: %s", exc)
+        return ""
+    safe_session = str(session_id or "").strip()
+    rows: list[str] = []
+    for item in items:
+        row_session = str(item.get("session_id") or "").strip()
+        if row_session and row_session != safe_session:
+            continue
+        row_channel = str(item.get("channel") or "global").strip()
+        if row_channel not in {"", "global", "*", "gateway", "bridge"}:
+            continue
+        date_hint = str(item.get("next_due_at") or item.get("start_at") or item.get("created_at") or "").strip()
+        date_hint = date_hint[:10] if date_hint else "未定日期"
+        title = _clip_text(item.get("title") or "照顾备忘", 40)
+        content = _clip_text(item.get("content") or "", 90)
+        if not content:
+            continue
+        rows.append(f"- {date_hint} {title}: {content}")
+        if len(rows) >= max(0, int(limit or 3)):
+            break
+    return "\n".join(rows)
 
 
 def _has_favorite_tag(tags: list | set | tuple | None) -> bool:
@@ -6817,6 +6584,123 @@ def _has_active_facets(facets: dict | None) -> bool:
 
 
 # =============================================================
+# Tool 0.8: reminders — standalone care memos
+# 工具 0.8：reminders — 独立照顾备忘
+# =============================================================
+def _reminder_public_payload(item: dict | None) -> dict:
+    if not item:
+        return {}
+    keys = [
+        "id",
+        "title",
+        "content",
+        "status",
+        "source",
+        "channel",
+        "session_id",
+        "start_at",
+        "end_at",
+        "next_due_at",
+        "repeat_rule",
+        "interval_rounds",
+        "cooldown_minutes",
+        "daily_limit",
+        "daily_reminder_date",
+        "daily_reminder_count",
+        "max_injections",
+        "last_reminded_at",
+        "last_reminded_round",
+        "reminder_count",
+        "created_at",
+        "updated_at",
+        "resolved_at",
+    ]
+    return {key: item.get(key) for key in keys}
+
+
+@mcp.tool()
+async def reminder_create(
+    title: str,
+    content: str,
+    next_due_at: str = "",
+    start_at: str = "",
+    end_at: str = "",
+    repeat_rule: str = "every_n_rounds",
+    interval_rounds: int = 6,
+    cooldown_minutes: int = 0,
+    daily_limit: int = 1,
+    max_injections: int = 0,
+    channel: str = "global",
+    session_id: str = "",
+) -> dict:
+    """创建独立照顾备忘；不写记忆桶，不触发 embedding。可设 start_at/end_at 和 daily_limit 控制每天注入次数。"""
+    try:
+        item = reminder_store.create(
+            title=title,
+            content=content,
+            next_due_at=next_due_at,
+            start_at=start_at,
+            end_at=end_at,
+            repeat_rule=repeat_rule,
+            interval_rounds=interval_rounds,
+            cooldown_minutes=cooldown_minutes,
+            daily_limit=daily_limit,
+            max_injections=max_injections,
+            channel=channel,
+            session_id=session_id,
+            source="mcp",
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"status": "created", "reminder": _reminder_public_payload(item)}
+
+
+@mcp.tool()
+async def reminder_list(status: str = "active", limit: int = 20) -> dict:
+    """列出独立照顾备忘；status 可用 active/done/archived/all。"""
+    try:
+        items = reminder_store.list(status=status, limit=_int_between(limit, 20, 1, 100))
+    except ValueError as exc:
+        return {"error": str(exc), "reminders": []}
+    return {"count": len(items), "reminders": [_reminder_public_payload(item) for item in items]}
+
+
+@mcp.tool()
+async def reminder_update(
+    reminder_id: str,
+    status: str = "",
+    snooze_minutes: int = 0,
+    next_due_at: str = "",
+    title: str = "",
+    content: str = "",
+    daily_limit: int = -1,
+    max_injections: int = -1,
+) -> dict:
+    """更新独立照顾备忘；完成用 status="done"，稍后用 snooze_minutes。"""
+    reminder_id = _coerce_memory_id(reminder_id)
+    if not reminder_id:
+        return {"error": "missing reminder_id"}
+    try:
+        if snooze_minutes:
+            item = reminder_store.snooze(reminder_id, minutes=_int_between(snooze_minutes, 60, 1, 525600))
+        else:
+            item = reminder_store.update(
+                reminder_id,
+                status=status or None,
+                next_due_at=next_due_at if next_due_at != "" else None,
+                title=title if title != "" else None,
+                content=content if content != "" else None,
+                daily_limit=daily_limit if daily_limit >= 0 else None,
+                max_injections=max_injections if max_injections >= 0 else None,
+            )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    if not item:
+        return {"error": "not found", "id": reminder_id}
+    return {"status": "updated", "reminder": _reminder_public_payload(item)}
+
+
+# =============================================================
 # Tool 1: breath — Breathe
 # 工具 1：breath — 呼吸
 #
@@ -6892,15 +6776,7 @@ async def breath(
         )
 
     if _is_pending_followup_domain(domain_key) or (not domain_key and _breath_query_requests_pending_followups(query)):
-        try:
-            all_buckets = await bucket_mgr.list_all(include_archive=False)
-            block = _format_pending_followups(all_buckets, limit=max_results, max_chars=220)
-            if not block:
-                return "没有找到未完成 followup。"
-            return _trim_text_to_token_budget("=== Pending Followups ===\n" + block, max_tokens)
-        except Exception as e:
-            logger.error("Pending followup retrieval failed / 待读 followup 失败: %s", e)
-            return "读取未完成 followup 失败。"
+        return "旧 followup/todo 派生待办已停用；请使用 reminder_list 或 /api/reminders 查看独立照顾备忘。"
 
     # --- Feel/whisper retrieval: independent read-only channels ---
     # --- Feel/whisper 检索：独立只读入口 ---
@@ -7949,7 +7825,7 @@ async def hold(
     date: str = "",
     domain: str = "",
 ) -> str:
-    """写一条长期记忆。单个事实/承诺/偏好用 hold；旧记忆的新感受用 comment_bucket；悄悄话用 whisper=True。date 可传事件日期；title 可选，传了就用给定标题，不传则自动生成。普通记忆不用填写 domain，系统会自动判断；维护自我锚点等特殊桶时可显式传 domain。显式 valence/arousal 会覆盖自动情绪。普通记忆 content 的最小写入就是正文；只有确实需要结构化时才按需使用 ### moment、### original、### reflection、### todo。### todo 只放明确可完成、可标 done、可写回的待办；“以后聊到 X 要想到 Y”这类回应提示放 ### reflection，不写 todo。feel=True/whisper=True 时 content 只写第一人称感受，不写分段标题。"""
+    """写一条长期记忆。单个事实/承诺/偏好用 hold；旧记忆的新感受用 comment_bucket；悄悄话用 whisper=True。date 可传事件日期；title 可选，传了就用给定标题，不传则自动生成。普通记忆不用填写 domain，系统会自动判断；维护自我锚点等特殊桶时可显式传 domain。显式 valence/arousal 会覆盖自动情绪。普通记忆 content 的最小写入就是正文；只有确实需要结构化时才按需使用 ### moment、### original、### reflection。需要之后轻轻提醒/照顾备忘的事项用 reminder_create，不写进长期记忆。feel=True/whisper=True 时 content 只写第一人称感受，不写分段标题。"""
     await decay_engine.ensure_started()
 
     # --- Input validation / 输入校验 ---
@@ -8245,7 +8121,7 @@ async def _grow_direct_structured_content(content: str, title: str = "", gate_pr
 
 @mcp.tool()
 async def grow(content: str, auto: bool = False, source: str = "", title: str = "", context: Context | None = None) -> str:
-    """把筛过的长片段拆成少量长期记忆；单条事实/承诺/偏好优先 hold，旧记忆补感受优先 comment_bucket。只有多个已筛选长期记忆点才用 grow，别塞整段流水账。保留原文称呼、昵称、互称、自称和原话，不要把临时称呼推成稳定画像事实。title 可选，短内容时传了就用你给的标题。普通记忆 content 的最小写入就是正文；只有确实需要结构化时才按需使用 ### moment、### original、### reflection、### todo。### todo 只放明确可完成、可标 done、可写回的待办；“以后聊到 X 要想到 Y”这类回应提示放 ### reflection，不写 todo。feel 年轮只写第一人称感受，不写分段标题。"""
+    """把筛过的长片段拆成少量长期记忆；单条事实/承诺/偏好优先 hold，旧记忆补感受优先 comment_bucket。只有多个已筛选长期记忆点才用 grow，别塞整段流水账。保留原文称呼、昵称、互称、自称和原话，不要把临时称呼推成稳定画像事实。title 可选，短内容时传了就用你给的标题。普通记忆 content 的最小写入就是正文；只有确实需要结构化时才按需使用 ### moment、### original、### reflection。需要之后轻轻提醒/照顾备忘的事项用 reminder_create，不写进长期记忆。feel 年轮只写第一人称感受，不写分段标题。"""
     await decay_engine.ensure_started()
 
     if not content or not content.strip():
@@ -10208,66 +10084,165 @@ async def api_moments(request):
 
 @mcp.custom_route("/api/todos", methods=["GET"])
 async def api_todos(request):
-    """List derived followup/todo items."""
+    """Deprecated: derived followup/todo items are disabled."""
+    from starlette.responses import JSONResponse
+    err = _require_dashboard_auth(request)
+    if err:
+        return err
+    return JSONResponse(
+        {
+            "count": 0,
+            "todos": [],
+            "disabled": True,
+            "message": "Derived followup/todo items are disabled. Use /api/reminders instead.",
+        }
+    )
+
+
+@mcp.custom_route("/api/todos/{todo_id}", methods=["PATCH"])
+async def api_todo_update(request):
+    """Deprecated: derived followup/todo items are disabled."""
+    from starlette.responses import JSONResponse
+    err = _require_dashboard_auth(request)
+    if err:
+        return err
+    return JSONResponse(
+        {"error": "derived followup/todo items are disabled; use /api/reminders instead"},
+        status_code=410,
+    )
+
+
+@mcp.custom_route("/api/todos/{todo_id}/writeback", methods=["POST"])
+async def api_todo_writeback(request):
+    """Deprecated: todo writeback is disabled."""
+    from starlette.responses import JSONResponse
+    err = _require_dashboard_auth(request)
+    if err:
+        return err
+    return JSONResponse(
+        {"error": "todo writeback is disabled; use /api/reminders instead"},
+        status_code=410,
+    )
+
+
+@mcp.custom_route("/api/reminders", methods=["GET"])
+async def api_reminders(request):
+    """List standalone care memos."""
     from starlette.responses import JSONResponse
     err = _require_dashboard_auth(request)
     if err:
         return err
     try:
-        await _sync_todos_from_buckets(include_archive=False)
-        status = str(request.query_params.get("status", "open") or "open").strip().lower()
+        status = str(request.query_params.get("status", "active") or "active").strip().lower()
         limit = _int_between(request.query_params.get("limit"), 50, 1, 200)
-        items = todo_store.list(status=status, limit=limit, include_inactive=status == "all")
-        return JSONResponse({"count": len(items), "todos": items})
+        items = reminder_store.list(status=status, limit=limit)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse({"count": len(items), "reminders": [_reminder_public_payload(item) for item in items]})
 
 
-@mcp.custom_route("/api/todos/{todo_id}", methods=["PATCH"])
-async def api_todo_update(request):
-    """Update one derived todo status. Marking done does not edit the bucket."""
+@mcp.custom_route("/api/reminders", methods=["POST"])
+async def api_reminder_create(request):
+    """Create a standalone care memo without touching memory buckets."""
     from starlette.responses import JSONResponse
     err = _require_dashboard_auth(request)
     if err:
         return err
-    todo_id = str(request.path_params.get("todo_id") or "").strip()
-    if not todo_id:
-        return JSONResponse({"error": "missing todo_id"}, status_code=400)
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid json body"}, status_code=400)
     if not isinstance(body, dict):
         return JSONResponse({"error": "json body must be an object"}, status_code=400)
-    status = str(body.get("status") or "").strip().lower()
     try:
-        todo = todo_store.set_status(todo_id, status)
-    except ValueError:
-        return JSONResponse({"error": "status must be open, done, or ignored"}, status_code=400)
-    if not todo:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    return JSONResponse({"status": "updated", "todo": todo})
+        item = reminder_store.create(
+            title=str(body.get("title") or ""),
+            content=str(body.get("content") or body.get("text") or ""),
+            next_due_at=str(body.get("next_due_at") or ""),
+            start_at=str(body.get("start_at") or ""),
+            end_at=str(body.get("end_at") or ""),
+            repeat_rule=str(body.get("repeat_rule") or "every_n_rounds"),
+            interval_rounds=_int_between(body.get("interval_rounds"), 6, 0, 100000),
+            cooldown_minutes=_int_between(body.get("cooldown_minutes"), 0, 0, 525600),
+            daily_limit=_int_between(body.get("daily_limit"), 1, 0, 100),
+            max_injections=_int_between(body.get("max_injections"), 0, 0, 100000),
+            channel=str(body.get("channel") or "global"),
+            session_id=str(body.get("session_id") or ""),
+            source=str(body.get("source") or "dashboard"),
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse({"status": "created", "reminder": _reminder_public_payload(item)})
 
 
-@mcp.custom_route("/api/todos/{todo_id}/writeback", methods=["POST"])
-async def api_todo_writeback(request):
-    """Archive a completed todo back into the source bucket followup_log."""
+@mcp.custom_route("/api/reminders/{reminder_id}", methods=["PATCH"])
+async def api_reminder_update(request):
+    """Update one standalone reminder. Snooze keeps it active and moves next_due_at."""
     from starlette.responses import JSONResponse
     err = _require_dashboard_auth(request)
     if err:
         return err
-    todo_id = str(request.path_params.get("todo_id") or "").strip()
-    if not todo_id:
-        return JSONResponse({"error": "missing todo_id"}, status_code=400)
-    result = await _writeback_completed_todo(todo_id)
-    status = result.get("status")
-    if status == "not_found":
-        return JSONResponse(result, status_code=404)
-    if status == "failed":
-        return JSONResponse(result, status_code=500)
-    if status == "skipped":
-        return JSONResponse(result, status_code=400)
-    return JSONResponse(result)
+    reminder_id = str(request.path_params.get("reminder_id") or "").strip()
+    if not reminder_id:
+        return JSONResponse({"error": "missing reminder_id"}, status_code=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "json body must be an object"}, status_code=400)
+    try:
+        if body.get("mark_reminded"):
+            item = reminder_store.mark_reminded(
+                reminder_id,
+                round_id=_int_between(body.get("round_id"), 0, 0, 100000000),
+            )
+        elif body.get("snooze_minutes"):
+            item = reminder_store.snooze(
+                reminder_id,
+                minutes=_int_between(body.get("snooze_minutes"), 60, 1, 525600),
+            )
+        else:
+            content_value = None
+            if "content" in body:
+                content_value = body.get("content")
+            elif "text" in body:
+                content_value = body.get("text")
+            item = reminder_store.update(
+                reminder_id,
+                title=body.get("title") if "title" in body else None,
+                content=content_value,
+                status=body.get("status") if "status" in body else None,
+                channel=body.get("channel") if "channel" in body else None,
+                session_id=body.get("session_id") if "session_id" in body else None,
+                start_at=body.get("start_at") if "start_at" in body else None,
+                end_at=body.get("end_at") if "end_at" in body else None,
+                next_due_at=body.get("next_due_at") if "next_due_at" in body else None,
+                repeat_rule=body.get("repeat_rule") if "repeat_rule" in body else None,
+                interval_rounds=_int_between(body.get("interval_rounds"), 0, 0, 100000)
+                if "interval_rounds" in body
+                else None,
+                cooldown_minutes=_int_between(body.get("cooldown_minutes"), 0, 0, 525600)
+                if "cooldown_minutes" in body
+                else None,
+                daily_limit=_int_between(body.get("daily_limit"), 1, 0, 100)
+                if "daily_limit" in body
+                else None,
+                max_injections=_int_between(body.get("max_injections"), 0, 0, 100000)
+                if "max_injections" in body
+                else None,
+            )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if not item:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "updated", "reminder": _reminder_public_payload(item)})
 
 
 @mcp.custom_route("/api/bucket/{bucket_id}", methods=["PATCH"])

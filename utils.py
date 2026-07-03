@@ -313,6 +313,8 @@ def load_config(config_path: str = None) -> dict:
             "favorite_memory_max_cards": 1,
             "related_memory_budget": 220,
             "operit_context_rewrite_enabled": False,
+            "active_reminders_enabled": True,
+            "active_reminder_inject_limit": 2,
             "core_memory_interval_rounds": 0,
             "current_inner_state_interval_rounds": 15,
             "relationship_weather_interval_rounds": 0,

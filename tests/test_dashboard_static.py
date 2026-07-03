@@ -262,15 +262,19 @@ def test_dashboard_exposes_todo_page():
     assert 'id="todo-view"' in html
     assert 'id="todo-list"' in html
     assert 'id="todo-status"' in html
-    assert "setTodoStatusFilter('open')" in html
+    assert "照顾备忘" in html
+    assert "setTodoStatusFilter('active')" in html
     assert "setTodoStatusFilter('done')" in html
+    assert "setTodoStatusFilter('archived')" in html
     assert "setTodoStatusFilter('all')" in html
     assert "loadTodos()" in tab_block
-    assert "BASE + '/api/todos?status='" in todo_block
-    assert "BASE + '/api/todos/' + encodeURIComponent(id)" in html
+    assert "BASE + '/api/reminders?status='" in todo_block
+    assert "BASE + '/api/reminders/' + encodeURIComponent(id)" in html
     assert "标完成" in html
-    assert "不改原记忆桶" in html
-    assert "已完成不会再进入 handoff" in html
+    assert "不从记忆桶派生" in html
+    assert "不会触发 embedding 重建" in html
+    assert "每天最多" in html
+    assert "今日已注入" in html
     assert "写回桶" not in html
     assert "writebackTodo" not in html
 

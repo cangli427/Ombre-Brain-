@@ -394,6 +394,55 @@ def test_gateway_prepare_reuses_bucket_list_cache(monkeypatch, test_config):
     assert bucket_mgr.list_all_calls == 1
 
 
+def test_gateway_injects_due_active_reminders_and_records_cooldown(monkeypatch, test_config):
+    bucket_mgr = CountingBucketManager()
+    cfg = _gateway_config(
+        test_config,
+        recalled_memory_budget=0,
+        related_memory_budget=0,
+        recent_context_budget=0,
+        current_inner_state_interval_rounds=0,
+        relationship_weather_interval_rounds=0,
+        favorite_memory_interval_rounds=0,
+        portrait_memory_enabled=False,
+        memory_sentinel_enabled=False,
+        active_reminders_enabled=True,
+        active_reminder_inject_limit=2,
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr)
+    reminder = service.reminder_store.create(
+        title="喝药",
+        content="小雨 6/30 到 7/4 早晚各喝一次药。",
+        repeat_rule="every_n_rounds",
+        interval_rounds=4,
+        daily_limit=0,
+    )
+    payload = {
+        "model": cfg["gateway"]["upstream_default_model"],
+        "messages": [{"role": "user", "content": "哥哥我写完作业了"}],
+    }
+
+    forwarded, recalled_ids, debug = _run(
+        service.prepare_payload(deepcopy(payload), "meds", include_debug=True)
+    )
+    joined = _joined_message_content(forwarded["messages"])
+
+    assert "照顾备忘" in joined
+    assert "只在合适时轻轻带一句，不要机械复述" in joined
+    assert "早晚各喝一次药" in joined
+    assert debug["active_reminder_ids"] == [reminder["id"]]
+
+    _run(service._record_successful_round("meds", recalled_ids, debug))
+
+    updated = service.reminder_store.get(reminder["id"])
+    assert updated["last_reminded_round"] == 1
+    assert updated["reminder_count"] == 1
+    assert service.reminder_store.due(session_id="meds", channel="gateway", round_id=3) == []
+    assert [row["id"] for row in service.reminder_store.due(session_id="meds", channel="gateway", round_id=5)] == [
+        reminder["id"]
+    ]
+
+
 def test_moment_graph_refresh_reuses_same_bucket_list_without_signature(
     monkeypatch,
     test_config,

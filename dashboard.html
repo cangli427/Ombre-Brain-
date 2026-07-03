@@ -2483,7 +2483,7 @@
 
 <div class="tabs">
   <div class="tab active" data-tab="list">记忆桶</div>
-  <div class="tab" data-tab="todos">待办</div>
+  <div class="tab" data-tab="todos">照顾备忘</div>
   <div class="tab" data-tab="breath">Breath 模拟</div>
   <div class="tab" data-tab="reflection">日印象</div>
   <div class="tab" data-tab="chat-memory">自动记忆</div>
@@ -2528,19 +2528,20 @@
   <div class="todo-shell">
     <div class="todo-toolbar">
       <div class="todo-title">
-        <h2>待办</h2>
-        <p>从记忆桶里的 followup / todo 派生；标完成只改待办表，不改原记忆桶，已完成不会再进入 handoff。</p>
+        <h2>照顾备忘</h2>
+        <p>短期待照顾的事；按起止时间轻轻注入，不从记忆桶派生，也不会触发 embedding 重建。</p>
       </div>
       <div class="todo-actions">
-        <button type="button" class="filter-btn active" data-todo-status="open" onclick="setTodoStatusFilter('open')">未完成</button>
+        <button type="button" class="filter-btn active" data-todo-status="active" onclick="setTodoStatusFilter('active')">进行中</button>
         <button type="button" class="filter-btn" data-todo-status="done" onclick="setTodoStatusFilter('done')">已完成</button>
+        <button type="button" class="filter-btn" data-todo-status="archived" onclick="setTodoStatusFilter('archived')">已归档</button>
         <button type="button" class="filter-btn" data-todo-status="all" onclick="setTodoStatusFilter('all')">全部</button>
         <button type="button" class="btn-secondary" onclick="loadTodos()">刷新</button>
       </div>
     </div>
     <div id="todo-status" class="todo-status"></div>
     <div id="todo-list" class="todo-list">
-      <div class="loading">打开待办页后加载清单。</div>
+      <div class="loading">打开照顾备忘页后加载清单。</div>
     </div>
   </div>
 </div>
@@ -3410,7 +3411,7 @@ let reflectionSelectedDate = formatLocalDate(new Date());
 let reflectionCurrentMonth = monthStart(new Date());
 let configSnapshot = null;
 let gatewayUpstreams = [];
-let todoStatusFilter = 'open';
+let todoStatusFilter = 'active';
 let todoItems = [];
 
 function authUrl(path) {
@@ -3602,13 +3603,14 @@ function getActiveTab() {
 
 function todoStatusLabel(status) {
   if (status === 'all') return '全部';
+  if (status === 'active') return '进行中';
   if (status === 'done') return '已完成';
-  if (status === 'ignored') return '已忽略';
-  return '未完成';
+  if (status === 'archived') return '已归档';
+  return '进行中';
 }
 
 function setTodoStatusFilter(status) {
-  todoStatusFilter = status || 'open';
+  todoStatusFilter = status || 'active';
   document.querySelectorAll('[data-todo-status]').forEach(function(btn) {
     btn.classList.toggle('active', btn.dataset.todoStatus === todoStatusFilter);
   });
@@ -3619,13 +3621,13 @@ async function loadTodos() {
   var list = document.getElementById('todo-list');
   var status = document.getElementById('todo-status');
   if (!list || !status) return;
-  list.innerHTML = '<div class="loading">加载待办…</div>';
+  list.innerHTML = '<div class="loading">加载照顾备忘…</div>';
   status.textContent = '';
   try {
-    var res = await authFetch(BASE + '/api/todos?status=' + encodeURIComponent(todoStatusFilter) + '&limit=100');
+    var res = await authFetch(BASE + '/api/reminders?status=' + encodeURIComponent(todoStatusFilter) + '&limit=100');
     if (!res) return;
     var data = await res.json();
-    todoItems = Array.isArray(data.todos) ? data.todos : [];
+    todoItems = Array.isArray(data.reminders) ? data.reminders : [];
     status.textContent = todoItems.length + ' 条 · ' + todoStatusLabel(todoStatusFilter);
     renderTodos(todoItems);
   } catch (e) {
@@ -3658,7 +3660,7 @@ function renderTodos(items) {
   var list = document.getElementById('todo-list');
   if (!list) return;
   if (!items.length) {
-    list.innerHTML = '<div class="loading">没有待办。</div>';
+    list.innerHTML = '<div class="loading">没有照顾备忘。</div>';
     return;
   }
   list.innerHTML = items.map(renderTodoItem).join('');
@@ -3666,35 +3668,45 @@ function renderTodos(items) {
 
 function renderTodoItem(todo) {
   var id = String(todo.id || '');
-  var bucketId = String(todo.source_bucket_id || todo.bucket_id || '');
-  var status = String(todo.status || 'open');
+  var status = String(todo.status || 'active');
+  var due = String(todo.next_due_at || todo.start_at || '');
+  var startAt = String(todo.start_at || '');
+  var endAt = String(todo.end_at || '');
+  var repeat = String(todo.repeat_rule || '');
+  var rounds = Number(todo.interval_rounds || 0);
+  var reminded = Number(todo.reminder_count || 0);
+  var dailyLimit = Number(todo.daily_limit || 0);
+  var dailyCount = Number(todo.daily_reminder_count || 0);
   var meta = [
-    todo.date || 'recent',
+    startAt || due || '未设时间',
+    endAt ? ('到期 ' + endAt) : '',
     todoStatusLabel(status),
+    repeat === 'every_n_rounds' && rounds ? ('每 ' + rounds + ' 轮') : repeat,
+    dailyLimit ? ('每天最多 ' + dailyLimit + ' 次') : '不限日次数',
+    dailyCount ? ('今日已注入 ' + dailyCount + ' 次') : '',
+    reminded ? ('总注入 ' + reminded + ' 次') : '',
   ].filter(Boolean).join(' · ');
   var actions = [];
-  if (bucketId) {
-    actions.push('<button type="button" onclick="showDetail(\'' + jsString(bucketId) + '\')">打开桶</button>');
-  }
-  if (status === 'open') {
+  if (status === 'active') {
     actions.push('<button type="button" onclick="updateTodoStatus(\'' + jsString(id) + '\', \'done\')">标完成</button>');
-    actions.push('<button type="button" onclick="updateTodoStatus(\'' + jsString(id) + '\', \'ignored\')">忽略</button>');
+    actions.push('<button type="button" onclick="snoozeTodo(\'' + jsString(id) + '\', 30)">稍后</button>');
+    actions.push('<button type="button" onclick="updateTodoStatus(\'' + jsString(id) + '\', \'archived\')">归档</button>');
   } else {
-    actions.push('<button type="button" onclick="updateTodoStatus(\'' + jsString(id) + '\', \'open\')">重新打开</button>');
+    actions.push('<button type="button" onclick="updateTodoStatus(\'' + jsString(id) + '\', \'active\')">重新打开</button>');
   }
   return '<div class="todo-item ' + escAttr(status) + '">' +
     '<div class="todo-item-header">' +
-      '<div class="todo-item-title">' + esc(todo.title || bucketId || '待办') + '</div>' +
+      '<div class="todo-item-title">' + esc(todo.title || '照顾备忘') + '</div>' +
       '<div class="todo-item-meta">' + esc(meta) + '</div>' +
     '</div>' +
-    '<div class="todo-item-body">' + esc(todo.text || '') + '</div>' +
+    '<div class="todo-item-body">' + esc(todo.content || todo.text || '') + '</div>' +
     '<div class="todo-item-actions">' + actions.join('') + '</div>' +
   '</div>';
 }
 
 async function updateTodoStatus(id, status) {
   try {
-    var res = await authFetch(BASE + '/api/todos/' + encodeURIComponent(id), {
+    var res = await authFetch(BASE + '/api/reminders/' + encodeURIComponent(id), {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({status: status}),
@@ -3705,6 +3717,22 @@ async function updateTodoStatus(id, status) {
   } catch (e) {
     var target = document.getElementById('todo-status');
     if (target) target.textContent = '更新失败: ' + e.message;
+  }
+}
+
+async function snoozeTodo(id, minutes) {
+  try {
+    var res = await authFetch(BASE + '/api/reminders/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({snooze_minutes: minutes || 30}),
+    });
+    if (!res) return;
+    if (!res.ok) throw new Error((await res.json().catch(function() { return {}; })).error || '稍后失败');
+    await loadTodos();
+  } catch (e) {
+    var target = document.getElementById('todo-status');
+    if (target) target.textContent = '稍后失败: ' + e.message;
   }
 }
 

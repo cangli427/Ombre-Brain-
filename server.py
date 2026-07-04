@@ -132,6 +132,7 @@ from utils import (
     bucket_content_for_recall,
     bucket_text_for_embedding,
     count_tokens_approx,
+    LOCAL_TZ,
     local_date_key,
     load_config,
     now_iso,
@@ -1919,20 +1920,24 @@ def _format_handoff_anchors(all_buckets: list[dict], limit: int = 2) -> str:
 
 
 def _format_handoff_care_memos(session_id: str = "", limit: int = 3) -> str:
+    safe_session = str(session_id or "").strip()
     try:
-        items = reminder_store.list(status="active", limit=50)
+        next_round = gateway_state_store.get_current_round(safe_session) + 1
+    except Exception:
+        next_round = 0
+    try:
+        items = reminder_store.due(
+            session_id=safe_session,
+            channels=["gateway", "bridge"],
+            round_id=next_round,
+            now=datetime.now(LOCAL_TZ),
+            limit=max(0, int(limit or 3)),
+        )
     except Exception as exc:
         logger.warning("Handoff care memo lookup failed / handoff 照顾备忘读取失败: %s", exc)
         return ""
-    safe_session = str(session_id or "").strip()
     rows: list[str] = []
     for item in items:
-        row_session = str(item.get("session_id") or "").strip()
-        if row_session and row_session != safe_session:
-            continue
-        row_channel = str(item.get("channel") or "global").strip()
-        if row_channel not in {"", "global", "*", "gateway", "bridge"}:
-            continue
         date_hint = str(item.get("next_due_at") or item.get("start_at") or item.get("created_at") or "").strip()
         date_hint = date_hint[:10] if date_hint else "未定日期"
         title = _clip_text(item.get("title") or "照顾备忘", 40)
@@ -6628,12 +6633,12 @@ async def reminder_create(
     repeat_rule: str = "every_n_rounds",
     interval_rounds: int = 6,
     cooldown_minutes: int = 0,
-    daily_limit: int = 1,
+    daily_limit: int = -1,
     max_injections: int = 0,
     channel: str = "global",
     session_id: str = "",
 ) -> dict:
-    """创建独立照顾备忘；不写记忆桶，不触发 embedding。可设 start_at/end_at 和 daily_limit 控制每天注入次数。"""
+    """创建独立照顾备忘；不写记忆桶，不触发 embedding。可设 start_at/end_at 和 daily_limit 控制每天出现次数；morning_evening 未指定时默认每天 2 次。"""
     try:
         item = reminder_store.create(
             title=title,
@@ -6644,7 +6649,7 @@ async def reminder_create(
             repeat_rule=repeat_rule,
             interval_rounds=interval_rounds,
             cooldown_minutes=cooldown_minutes,
-            daily_limit=daily_limit,
+            daily_limit=daily_limit if daily_limit >= 0 else None,
             max_injections=max_injections,
             channel=channel,
             session_id=session_id,
@@ -10166,7 +10171,9 @@ async def api_reminder_create(request):
             repeat_rule=str(body.get("repeat_rule") or "every_n_rounds"),
             interval_rounds=_int_between(body.get("interval_rounds"), 6, 0, 100000),
             cooldown_minutes=_int_between(body.get("cooldown_minutes"), 0, 0, 525600),
-            daily_limit=_int_between(body.get("daily_limit"), 1, 0, 100),
+            daily_limit=_int_between(body.get("daily_limit"), 1, 0, 100)
+            if "daily_limit" in body
+            else None,
             max_injections=_int_between(body.get("max_injections"), 0, 0, 100000),
             channel=str(body.get("channel") or "global"),
             session_id=str(body.get("session_id") or ""),

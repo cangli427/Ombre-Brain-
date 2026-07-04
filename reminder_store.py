@@ -11,6 +11,7 @@ from utils import LOCAL_TZ, now_iso
 
 REMINDER_STATUSES = {"active", "done", "archived"}
 REMINDER_REPEAT_RULES = {"once", "none", "every_n_rounds", "daily", "morning_evening"}
+MORNING_EVENING_SLOTS = ((8, 0), (20, 0))
 
 
 class ReminderStore:
@@ -101,7 +102,7 @@ class ReminderStore:
         repeat_rule: str = "every_n_rounds",
         interval_rounds: int = 6,
         cooldown_minutes: int = 0,
-        daily_limit: int = 1,
+        daily_limit: int | None = None,
         max_injections: int = 0,
         reminder_id: str = "",
     ) -> dict:
@@ -129,13 +130,13 @@ class ReminderStore:
             "source": str(source or "manual").strip() or "manual",
             "channel": str(channel or "global").strip() or "global",
             "session_id": str(session_id or "").strip(),
-            "start_at": self._clean_optional_time(start_at),
-            "end_at": self._clean_optional_time(end_at),
-            "next_due_at": self._clean_optional_time(next_due_at),
+            "start_at": self._validate_optional_time(start_at),
+            "end_at": self._validate_optional_time(end_at),
+            "next_due_at": self._validate_optional_time(next_due_at),
             "repeat_rule": repeat,
             "interval_rounds": interval,
             "cooldown_minutes": max(0, self._safe_int(cooldown_minutes, 0)),
-            "daily_limit": max(0, self._safe_int(daily_limit, 1)),
+            "daily_limit": self._normalize_daily_limit(daily_limit, repeat),
             "max_injections": max(0, self._safe_int(max_injections, 0)),
             "created_at": now,
             "updated_at": now,
@@ -197,6 +198,7 @@ class ReminderStore:
         *,
         session_id: str = "",
         channel: str = "gateway",
+        channels: list[str] | tuple[str, ...] | set[str] | None = None,
         round_id: int = 0,
         now: datetime | str | None = None,
         limit: int = 2,
@@ -206,11 +208,19 @@ class ReminderStore:
         safe_session = str(session_id or "").strip()
         safe_channel = str(channel or "gateway").strip()
         safe_round = max(0, self._safe_int(round_id, 0))
+        safe_channels = [
+            str(item or "").strip()
+            for item in (channels or [safe_channel])
+            if str(item or "").strip()
+        ] or [safe_channel]
         rows = self.list(status="active", limit=200)
         due_rows = [
             row
             for row in rows
-            if self._row_is_due(row, session_id=safe_session, channel=safe_channel, round_id=safe_round, now=safe_now)
+            if any(
+                self._row_is_due(row, session_id=safe_session, channel=item, round_id=safe_round, now=safe_now)
+                for item in safe_channels
+            )
         ]
         return due_rows[: max(0, min(10, int(limit or 2)))]
 
@@ -283,11 +293,11 @@ class ReminderStore:
         if session_id is not None:
             updates["session_id"] = str(session_id or "").strip()
         if start_at is not None:
-            updates["start_at"] = self._clean_optional_time(start_at)
+            updates["start_at"] = self._validate_optional_time(start_at)
         if end_at is not None:
-            updates["end_at"] = self._clean_optional_time(end_at)
+            updates["end_at"] = self._validate_optional_time(end_at)
         if next_due_at is not None:
-            updates["next_due_at"] = self._clean_optional_time(next_due_at)
+            updates["next_due_at"] = self._validate_optional_time(next_due_at)
         if repeat_rule is not None:
             updates["repeat_rule"] = self._normalize_repeat_rule(repeat_rule)
         if interval_rounds is not None:
@@ -459,14 +469,45 @@ class ReminderStore:
     def _next_due_after_reminder(self, item: dict, reminded_at: str) -> str:
         repeat_rule = self._normalize_repeat_rule(item.get("repeat_rule"))
         if repeat_rule == "daily":
-            base = self._parse_time(reminded_at, now=datetime.now(LOCAL_TZ), end_of_day=False) or datetime.now(LOCAL_TZ)
-            return (base + timedelta(days=1)).isoformat(timespec="seconds")
+            base = self._coerce_now(reminded_at)
+            return self._next_daily_due(item, base).isoformat(timespec="seconds")
         if repeat_rule == "morning_evening":
-            base = self._parse_time(reminded_at, now=datetime.now(LOCAL_TZ), end_of_day=False) or datetime.now(LOCAL_TZ)
-            return (base + timedelta(hours=12)).isoformat(timespec="seconds")
+            base = self._coerce_now(reminded_at)
+            return self._next_morning_evening_due(base).isoformat(timespec="seconds")
         if repeat_rule in {"once", "none"}:
             return ""
         return str(item.get("next_due_at") or "")
+
+    def _next_daily_due(self, item: dict, base: datetime) -> datetime:
+        anchor = self._time_anchor(item, base)
+        candidate = base.replace(
+            hour=anchor.hour,
+            minute=anchor.minute,
+            second=anchor.second,
+            microsecond=0,
+        )
+        if candidate <= base:
+            candidate += timedelta(days=1)
+        return candidate
+
+    @staticmethod
+    def _next_morning_evening_due(base: datetime) -> datetime:
+        for hour, minute in MORNING_EVENING_SLOTS:
+            candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if candidate > base:
+                return candidate
+        hour, minute = MORNING_EVENING_SLOTS[0]
+        return (base + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    def _time_anchor(self, item: dict, base: datetime) -> datetime:
+        for key in ("next_due_at", "start_at"):
+            raw = str(item.get(key) or "").strip()
+            if not raw or self._is_date_only(raw):
+                continue
+            parsed = self._parse_time(raw, now=base, end_of_day=False)
+            if parsed:
+                return parsed
+        return base
 
     @staticmethod
     def _normalize_repeat_rule(value: Any) -> str:
@@ -481,8 +522,26 @@ class ReminderStore:
             return default
 
     @staticmethod
-    def _clean_optional_time(value: Any) -> str:
-        return str(value or "").strip()
+    def _validate_optional_time(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        parsed = ReminderStore._parse_time(text, now=datetime.now(LOCAL_TZ), end_of_day=False)
+        if not parsed:
+            raise ValueError("invalid time; use YYYY-MM-DD or ISO datetime")
+        return text
+
+    @staticmethod
+    def _normalize_daily_limit(value: Any, repeat_rule: str) -> int:
+        raw = ReminderStore._safe_int(value, -1)
+        if raw < 0:
+            return 2 if repeat_rule == "morning_evening" else 1
+        return max(0, raw)
+
+    @staticmethod
+    def _is_date_only(value: Any) -> bool:
+        text = str(value or "").strip()
+        return len(text) == 10 and text[4] == "-" and text[7] == "-"
 
     @staticmethod
     def _coerce_now(value: datetime | str | None) -> datetime:

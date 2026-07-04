@@ -351,6 +351,65 @@
     color: var(--text-dim);
     font-size: 13px;
   }
+  .todo-editor {
+    display: none;
+    margin-bottom: 16px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface) 82%, var(--bg));
+  }
+  .todo-editor.open {
+    display: block;
+  }
+  .todo-editor-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .todo-editor-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .todo-editor-field.full {
+    grid-column: 1 / -1;
+  }
+  .todo-editor-field label {
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .todo-editor-field input,
+  .todo-editor-field select,
+  .todo-editor-field textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 9px 11px;
+  }
+  .todo-editor-field textarea {
+    min-height: 82px;
+    resize: vertical;
+  }
+  .todo-editor-buttons {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+  .todo-editor-message {
+    min-height: 18px;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .todo-editor-message.error {
+    color: var(--negative);
+  }
   .todo-list {
     display: grid;
     gap: 12px;
@@ -409,6 +468,25 @@
   .todo-item-actions button:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  @media (max-width: 720px) {
+    .todo-toolbar {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .todo-actions {
+      justify-content: flex-start;
+    }
+    .todo-editor-grid {
+      grid-template-columns: 1fr;
+    }
+    .todo-item-header {
+      flex-direction: column;
+      gap: 6px;
+    }
+    .todo-item-meta {
+      white-space: normal;
+    }
   }
 
   .bucket-list { display: flex; flex-direction: column; gap: 8px; }
@@ -2532,6 +2610,7 @@
         <p>短期待照顾的事；按起止时间轻轻注入，不从记忆桶派生，也不会触发 embedding 重建。</p>
       </div>
       <div class="todo-actions">
+        <button type="button" class="btn-secondary" onclick="openTodoCreateForm()">新增</button>
         <button type="button" class="filter-btn active" data-todo-status="active" onclick="setTodoStatusFilter('active')">进行中</button>
         <button type="button" class="filter-btn" data-todo-status="done" onclick="setTodoStatusFilter('done')">已完成</button>
         <button type="button" class="filter-btn" data-todo-status="archived" onclick="setTodoStatusFilter('archived')">已归档</button>
@@ -2540,6 +2619,69 @@
       </div>
     </div>
     <div id="todo-status" class="todo-status"></div>
+    <form id="todo-editor" class="todo-editor" onsubmit="saveTodoForm(event)">
+      <div class="todo-editor-grid">
+        <div class="todo-editor-field">
+          <label for="todo-form-title">标题</label>
+          <input id="todo-form-title" type="text" autocomplete="off" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-repeat">重复</label>
+          <select id="todo-form-repeat">
+            <option value="every_n_rounds">每隔几轮</option>
+            <option value="daily">每天</option>
+            <option value="morning_evening">早晚</option>
+            <option value="once">一次</option>
+            <option value="none">不重复</option>
+          </select>
+        </div>
+        <div class="todo-editor-field full">
+          <label for="todo-form-content">正文</label>
+          <textarea id="todo-form-content"></textarea>
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-start">开始</label>
+          <input id="todo-form-start" type="text" placeholder="2026-07-04 或 2026-07-04T08:00:00+08:00" autocomplete="off" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-end">结束</label>
+          <input id="todo-form-end" type="text" placeholder="2026-07-04 或 ISO 时间" autocomplete="off" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-next">下次出现</label>
+          <input id="todo-form-next" type="text" placeholder="留空表示现在可用" autocomplete="off" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-rounds">轮次间隔</label>
+          <input id="todo-form-rounds" type="number" min="0" step="1" placeholder="6" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-daily-limit">每日上限</label>
+          <input id="todo-form-daily-limit" type="number" min="0" step="1" placeholder="自动" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-max">总上限</label>
+          <input id="todo-form-max" type="number" min="0" step="1" placeholder="0 表示不限" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-cooldown">间隔分钟</label>
+          <input id="todo-form-cooldown" type="number" min="0" step="1" placeholder="0" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-channel">通道</label>
+          <input id="todo-form-channel" type="text" placeholder="global" autocomplete="off" />
+        </div>
+        <div class="todo-editor-field">
+          <label for="todo-form-session">会话</label>
+          <input id="todo-form-session" type="text" placeholder="留空为全局" autocomplete="off" />
+        </div>
+      </div>
+      <div class="todo-editor-buttons">
+        <button type="submit" class="btn-secondary" id="todo-form-submit">保存</button>
+        <button type="button" class="btn-secondary" onclick="closeTodoForm()">取消</button>
+        <span id="todo-form-message" class="todo-editor-message"></span>
+      </div>
+    </form>
     <div id="todo-list" class="todo-list">
       <div class="loading">打开照顾备忘页后加载清单。</div>
     </div>
@@ -3413,6 +3555,7 @@ let configSnapshot = null;
 let gatewayUpstreams = [];
 let todoStatusFilter = 'active';
 let todoItems = [];
+let editingTodoId = '';
 
 function authUrl(path) {
   return path.startsWith('http') ? path : BASE + path;
@@ -3666,27 +3809,172 @@ function renderTodos(items) {
   list.innerHTML = items.map(renderTodoItem).join('');
 }
 
+function todoRepeatLabel(rule, rounds) {
+  if (rule === 'every_n_rounds') return rounds ? ('每 ' + rounds + ' 轮') : '按轮次';
+  if (rule === 'daily') return '每天';
+  if (rule === 'morning_evening') return '早晚';
+  if (rule === 'once') return '一次';
+  if (rule === 'none') return '不重复';
+  return rule || '';
+}
+
+function todoFormEl(id) {
+  return document.getElementById(id);
+}
+
+function todoFormValue(id) {
+  var el = todoFormEl(id);
+  return el ? String(el.value || '').trim() : '';
+}
+
+function setTodoFormValue(id, value) {
+  var el = todoFormEl(id);
+  if (el) el.value = value == null ? '' : String(value);
+}
+
+function setTodoFormMessage(message, isError) {
+  var el = todoFormEl('todo-form-message');
+  if (!el) return;
+  el.textContent = message || '';
+  el.classList.toggle('error', Boolean(isError));
+}
+
+function openTodoCreateForm() {
+  editingTodoId = '';
+  setTodoFormValue('todo-form-title', '');
+  setTodoFormValue('todo-form-content', '');
+  setTodoFormValue('todo-form-start', '');
+  setTodoFormValue('todo-form-end', '');
+  setTodoFormValue('todo-form-next', '');
+  setTodoFormValue('todo-form-repeat', 'every_n_rounds');
+  setTodoFormValue('todo-form-rounds', '6');
+  setTodoFormValue('todo-form-daily-limit', '');
+  setTodoFormValue('todo-form-max', '');
+  setTodoFormValue('todo-form-cooldown', '');
+  setTodoFormValue('todo-form-channel', 'global');
+  setTodoFormValue('todo-form-session', '');
+  var submit = todoFormEl('todo-form-submit');
+  if (submit) submit.textContent = '保存';
+  setTodoFormMessage('', false);
+  var editor = todoFormEl('todo-editor');
+  if (editor) {
+    editor.classList.add('open');
+    editor.scrollIntoView({block: 'nearest'});
+  }
+  var title = todoFormEl('todo-form-title');
+  if (title) title.focus();
+}
+
+function openTodoEditForm(id) {
+  var todo = todoItems.find(function(item) { return String(item.id || '') === String(id || ''); });
+  if (!todo) {
+    var status = todoFormEl('todo-status');
+    if (status) status.textContent = '没有找到这条照顾备忘';
+    return;
+  }
+  editingTodoId = String(todo.id || '');
+  setTodoFormValue('todo-form-title', todo.title || '');
+  setTodoFormValue('todo-form-content', todo.content || todo.text || '');
+  setTodoFormValue('todo-form-start', todo.start_at || '');
+  setTodoFormValue('todo-form-end', todo.end_at || '');
+  setTodoFormValue('todo-form-next', todo.next_due_at || '');
+  setTodoFormValue('todo-form-repeat', todo.repeat_rule || 'every_n_rounds');
+  setTodoFormValue('todo-form-rounds', todo.interval_rounds == null ? '' : todo.interval_rounds);
+  setTodoFormValue('todo-form-daily-limit', todo.daily_limit == null ? '' : todo.daily_limit);
+  setTodoFormValue('todo-form-max', todo.max_injections == null ? '' : todo.max_injections);
+  setTodoFormValue('todo-form-cooldown', todo.cooldown_minutes == null ? '' : todo.cooldown_minutes);
+  setTodoFormValue('todo-form-channel', todo.channel || 'global');
+  setTodoFormValue('todo-form-session', todo.session_id || '');
+  var submit = todoFormEl('todo-form-submit');
+  if (submit) submit.textContent = '保存修改';
+  setTodoFormMessage('', false);
+  var editor = todoFormEl('todo-editor');
+  if (editor) {
+    editor.classList.add('open');
+    editor.scrollIntoView({block: 'nearest'});
+  }
+}
+
+function closeTodoForm() {
+  editingTodoId = '';
+  var editor = todoFormEl('todo-editor');
+  if (editor) editor.classList.remove('open');
+  setTodoFormMessage('', false);
+}
+
+function todoNumberPayload(payload, id, key) {
+  var raw = todoFormValue(id);
+  if (raw === '') return;
+  var value = Number(raw);
+  if (!Number.isFinite(value)) throw new Error('数字字段格式不对');
+  payload[key] = value;
+}
+
+function buildTodoFormPayload() {
+  var title = todoFormValue('todo-form-title');
+  var content = todoFormValue('todo-form-content');
+  if (!title) throw new Error('标题不能为空');
+  if (!content) throw new Error('正文不能为空');
+  var payload = {
+    title: title,
+    content: content,
+    start_at: todoFormValue('todo-form-start'),
+    end_at: todoFormValue('todo-form-end'),
+    next_due_at: todoFormValue('todo-form-next'),
+    repeat_rule: todoFormValue('todo-form-repeat') || 'every_n_rounds',
+    channel: todoFormValue('todo-form-channel') || 'global',
+    session_id: todoFormValue('todo-form-session'),
+  };
+  todoNumberPayload(payload, 'todo-form-rounds', 'interval_rounds');
+  todoNumberPayload(payload, 'todo-form-daily-limit', 'daily_limit');
+  todoNumberPayload(payload, 'todo-form-max', 'max_injections');
+  todoNumberPayload(payload, 'todo-form-cooldown', 'cooldown_minutes');
+  return payload;
+}
+
+async function saveTodoForm(event) {
+  if (event) event.preventDefault();
+  try {
+    var payload = buildTodoFormPayload();
+    var url = editingTodoId
+      ? BASE + '/api/reminders/' + encodeURIComponent(editingTodoId)
+      : BASE + '/api/reminders';
+    var res = await authFetch(url, {
+      method: editingTodoId ? 'PATCH' : 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!res) return;
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok) throw new Error(data.error || '保存失败');
+    closeTodoForm();
+    await loadTodos();
+  } catch (e) {
+    setTodoFormMessage(e.message || '保存失败', true);
+  }
+}
+
 function renderTodoItem(todo) {
   var id = String(todo.id || '');
   var status = String(todo.status || 'active');
-  var due = String(todo.next_due_at || todo.start_at || '');
+  var nextAt = String(todo.next_due_at || '');
   var startAt = String(todo.start_at || '');
   var endAt = String(todo.end_at || '');
   var repeat = String(todo.repeat_rule || '');
   var rounds = Number(todo.interval_rounds || 0);
-  var reminded = Number(todo.reminder_count || 0);
   var dailyLimit = Number(todo.daily_limit || 0);
-  var dailyCount = Number(todo.daily_reminder_count || 0);
+  var maxCount = Number(todo.max_injections || 0);
   var meta = [
-    startAt || due || '未设时间',
+    nextAt ? ('下次 ' + nextAt) : (startAt ? ('开始 ' + startAt) : '未设时间'),
+    startAt && nextAt && startAt !== nextAt ? ('开始 ' + startAt) : '',
     endAt ? ('到期 ' + endAt) : '',
     todoStatusLabel(status),
-    repeat === 'every_n_rounds' && rounds ? ('每 ' + rounds + ' 轮') : repeat,
+    todoRepeatLabel(repeat, rounds),
     dailyLimit ? ('每天最多 ' + dailyLimit + ' 次') : '不限日次数',
-    dailyCount ? ('今日已注入 ' + dailyCount + ' 次') : '',
-    reminded ? ('总注入 ' + reminded + ' 次') : '',
+    maxCount ? ('总共最多 ' + maxCount + ' 次') : '',
   ].filter(Boolean).join(' · ');
   var actions = [];
+  actions.push('<button type="button" onclick="openTodoEditForm(\'' + jsString(id) + '\')">编辑</button>');
   if (status === 'active') {
     actions.push('<button type="button" onclick="updateTodoStatus(\'' + jsString(id) + '\', \'done\')">标完成</button>');
     actions.push('<button type="button" onclick="snoozeTodo(\'' + jsString(id) + '\', 30)">稍后</button>');

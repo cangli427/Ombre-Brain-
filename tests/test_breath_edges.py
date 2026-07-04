@@ -2545,6 +2545,11 @@ async def test_handoff_includes_at_most_three_care_memos(patch_breath, monkeypat
         content="这条不该进 handoff。",
         end_at="2026-01-01",
     )
+    server.reminder_store.create(
+        title="稍后备忘",
+        content="这条还没到时间。",
+        next_due_at="2999-01-01T08:00:00+08:00",
+    )
 
     monkeypatch.setattr(
         server,
@@ -2567,6 +2572,7 @@ async def test_handoff_includes_at_most_three_care_memos(patch_breath, monkeypat
     assert "喝药 1" in result
     assert "喝药 4" not in result
     assert "过期备忘" not in result
+    assert "稍后备忘" not in result
 
 
 @pytest.mark.asyncio

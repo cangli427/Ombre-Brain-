@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 from reminder_store import ReminderStore
 from utils import LOCAL_TZ
 
@@ -67,6 +69,44 @@ def test_daily_reminder_sets_next_due_after_mark(tmp_path):
     next_due = datetime.fromisoformat(updated["next_due_at"])
 
     assert next_due - reminded_at == timedelta(days=1)
+
+
+def test_daily_reminder_keeps_configured_time_of_day(tmp_path):
+    store = ReminderStore({"state_dir": str(tmp_path / "state"), "buckets_dir": str(tmp_path / "buckets")})
+    item = store.create(
+        title="每日提醒",
+        content="每天早上看一眼。",
+        repeat_rule="daily",
+        next_due_at="2026-07-03T08:00:00+08:00",
+    )
+
+    updated = store.mark_reminded(item["id"], round_id=1, reminded_at="2026-07-03T09:20:00+08:00")
+
+    assert updated["next_due_at"] == "2026-07-04T08:00:00+08:00"
+
+
+def test_morning_evening_uses_fixed_slots_and_default_daily_limit(tmp_path):
+    store = ReminderStore({"state_dir": str(tmp_path / "state"), "buckets_dir": str(tmp_path / "buckets")})
+    item = store.create(title="早晚提醒", content="早晚各看一次。", repeat_rule="morning_evening")
+
+    assert item["daily_limit"] == 2
+
+    updated = store.mark_reminded(item["id"], round_id=1, reminded_at="2026-07-03T09:20:00+08:00")
+    assert updated["next_due_at"] == "2026-07-03T20:00:00+08:00"
+
+    updated = store.mark_reminded(item["id"], round_id=2, reminded_at="2026-07-03T21:00:00+08:00")
+    assert updated["next_due_at"] == "2026-07-04T08:00:00+08:00"
+
+
+def test_reminder_store_rejects_invalid_times(tmp_path):
+    store = ReminderStore({"state_dir": str(tmp_path / "state"), "buckets_dir": str(tmp_path / "buckets")})
+
+    with pytest.raises(ValueError, match="invalid time"):
+        store.create(title="坏时间", content="这条时间写错了。", start_at="明天早上")
+
+    item = store.create(title="好时间", content="这条可以改。", start_at="2026-07-03")
+    with pytest.raises(ValueError, match="invalid time"):
+        store.update(item["id"], next_due_at="七点")
 
 
 def test_daily_limit_consumes_one_injection_per_day(tmp_path):

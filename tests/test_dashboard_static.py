@@ -262,7 +262,11 @@ def test_dashboard_exposes_todo_page():
     assert 'id="todo-view"' in html
     assert 'id="todo-list"' in html
     assert 'id="todo-status"' in html
+    assert 'id="todo-editor"' in html
     assert "照顾备忘" in html
+    assert "openTodoCreateForm()" in html
+    assert "openTodoEditForm" in html
+    assert "saveTodoForm" in html
     assert "setTodoStatusFilter('active')" in html
     assert "setTodoStatusFilter('done')" in html
     assert "setTodoStatusFilter('archived')" in html
@@ -274,7 +278,8 @@ def test_dashboard_exposes_todo_page():
     assert "不从记忆桶派生" in html
     assert "不会触发 embedding 重建" in html
     assert "每天最多" in html
-    assert "今日已注入" in html
+    assert "今日已注入" not in html
+    assert "总注入" not in html
     assert "写回桶" not in html
     assert "writebackTodo" not in html
 

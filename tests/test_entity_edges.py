@@ -2,7 +2,7 @@ import asyncio
 import json
 
 from entity_edges import EntityEdgeStore, entity_query_hints, extract_entity_edges_from_bucket
-from scripts import audit_entity_edges
+from scripts import audit_entity_edges, compare_dynamic_alpha_rrf
 
 
 def _run(coro):
@@ -42,7 +42,7 @@ def test_extract_entity_edges_from_bucket_uses_configured_names(test_config):
     assert matches["bucket-a"]["score"] > 0.6
 
 
-def test_entity_query_hints_map_pronouns_to_configured_subjects():
+def test_entity_query_hints_map_pronouns_to_configured_subjects(test_config):
     identity = {
         "ai_name": "Echo",
         "user_name": "Mira",
@@ -60,6 +60,22 @@ def test_entity_query_hints_map_pronouns_to_configured_subjects():
     assert "participates_in" in participation_hint["relations"]
     assert shared_hint["subject"] == "米拉+Echo"
     assert "shared_anchor" in shared_hint["relations"]
+
+    relation_hints = entity_query_hints("对未来的承诺和五十年后有关吗", identity)
+    relation_hint = next(hint for hint in relation_hints if "shared_anchor" in hint["relations"])
+    assert relation_hint["subject"] == "米拉+Echo"
+    assert "对未来的承诺" in relation_hint["object_terms"]
+    assert "五十年后" in relation_hint["object_terms"]
+
+    store = EntityEdgeStore(test_config)
+    store.add_edge("米拉+Echo", "shared_anchor", "对未来的承诺", "future-promise", 0.66, "test")
+    store.add_edge("米拉+Echo", "shared_anchor", "五十年后才落地的具身项目", "fifty-years", 0.66, "test")
+    matches = store.match_query(
+        "对未来的承诺和五十年后有关吗",
+        identity,
+        bucket_ids={"future-promise", "fifty-years"},
+    )
+    assert set(matches) == {"future-promise", "fifty-years"}
 
 
 def test_extract_entity_edges_does_not_treat_nominal_writing_window_as_participation(test_config):
@@ -246,3 +262,24 @@ def test_audit_entity_edges_apply_appends_missing_edges_once(tmp_path, test_conf
     assert second["backfill"]["backup_path"] == ""
     assert not (tmp_path / "backups" / "entity_edges.jsonl").exists()
     assert edge_path.read_text(encoding="utf-8").splitlines() == lines
+
+
+def test_compare_dynamic_alpha_rrf_copies_snapshot_entity_edges(tmp_path):
+    buckets_dir = tmp_path / "snapshot" / "buckets"
+    state_dir = tmp_path / "snapshot" / "state"
+    work_state_dir = tmp_path / "work" / "state"
+    state_dir.mkdir(parents=True)
+    buckets_dir.mkdir(parents=True)
+    work_state_dir.mkdir(parents=True)
+    edge_path = state_dir / "entity_edges.jsonl"
+    edge_path.write_text('{"bucket_id":"edge-bucket"}\n', encoding="utf-8")
+
+    class Args:
+        no_entity_edges = False
+        entity_edges_path = ""
+
+    resolved = compare_dynamic_alpha_rrf.resolve_entity_edges_path(Args, buckets_dir)
+    copied = compare_dynamic_alpha_rrf.copy_entity_edges_to_state(resolved, work_state_dir)
+
+    assert copied == str(edge_path)
+    assert (work_state_dir / "entity_edges.jsonl").read_text(encoding="utf-8") == edge_path.read_text(encoding="utf-8")

@@ -117,7 +117,25 @@ QUERY_HINTS = (
     ("dislikes", ("我不喜欢", "我讨厌", "我厌恶", "讨厌的", "不喜欢的")),
     ("boundary", ("我的雷点", "雷点", "边界")),
     ("participates_in", ("你参与", "你做", "你写", "你修", "你搭", "你帮", "你陪", "你负责")),
-    ("shared_anchor", ("我们", "咱们", "我们的", "一起", "共同")),
+    (
+        "shared_anchor",
+        (
+            "我们",
+            "咱们",
+            "我们的",
+            "一起",
+            "共同",
+            "有关",
+            "相关",
+            "关联",
+            "联系",
+            "关系",
+            "约定",
+            "承诺",
+            "暗号",
+            "习惯",
+        ),
+    ),
 )
 
 NOISY_OBJECTS = {
@@ -443,11 +461,14 @@ def entity_query_hints(query: str, identity: dict | None = None) -> list[dict[st
             relations = {relation}
             if relation == "likes":
                 relations.add("prefers")
+        object_terms = _query_object_terms(text, relation)
+        if relation == "shared_anchor" and not object_terms:
+            continue
         hints.append(
             {
                 "subject": subject,
                 "relations": relations,
-                "object_terms": _query_object_terms(text, relation),
+                "object_terms": object_terms,
             }
         )
     return hints
@@ -581,13 +602,26 @@ def _query_object_terms(query: str, relation: str) -> list[str]:
         "共同",
     ):
         text = text.replace(marker, " ")
-    text = re.sub(r"(什么|哪些|哪个|哪段|哪条|记忆|事情|东西|相关|关于|之前|以前|还记得|记得|吗|呢|呀|啊)", " ", text)
+    text = re.sub(
+        r"(什么|哪些|哪个|哪段|哪条|记忆|事情|东西|相关|有关|关联|联系|关于|之前|以前|还记得|记得|怎么回事|为什么|是否|是不是|吗|呢|呀|啊)",
+        " ",
+        text,
+    )
+    text = re.sub(r"(?:和|与|以及|及|、|\+)", " ", text)
     terms = []
+    for term in re.findall(r"[零一二两三四五六七八九十百千万\d]+年后?", query):
+        clean = _clean_entity_object(term)
+        if clean and len(_compact_key(clean)) >= 2:
+            terms.append(clean)
+    for term in re.findall(r"[A-Za-z][A-Za-z0-9_.:-]*", query):
+        clean = _clean_entity_object(term)
+        if clean and len(_compact_key(clean)) >= 2:
+            terms.append(clean)
     for term in re.split(r"[\s，。！？、,.!?:：;；~～]+", text):
         clean = _clean_entity_object(term)
         if clean and len(_compact_key(clean)) >= 2:
             terms.append(clean)
-    return terms[:4]
+    return list(dict.fromkeys(terms))[:4]
 
 
 def _canonical_user_subject(identity: dict) -> str:

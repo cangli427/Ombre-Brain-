@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -171,6 +172,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip moment diffusion debug collection.",
     )
+    parser.add_argument(
+        "--entity-edges-path",
+        default="",
+        help="Optional entity_edges.jsonl to copy into the temp state dir. Defaults to <buckets-dir>/../state/entity_edges.jsonl when present.",
+    )
+    parser.add_argument(
+        "--no-entity-edges",
+        action="store_true",
+        help="Do not copy snapshot entity_edges.jsonl into the temp state dir.",
+    )
     return parser.parse_args()
 
 
@@ -249,6 +260,25 @@ def build_config(args: argparse.Namespace, state_dir: Path, api_key: str) -> dic
     )
     config["gateway"] = gateway
     return config
+
+
+def resolve_entity_edges_path(args: argparse.Namespace, buckets_dir: Path) -> Path | None:
+    if args.no_entity_edges:
+        return None
+    if args.entity_edges_path:
+        path = Path(args.entity_edges_path)
+        return path if path.exists() else None
+    default_path = buckets_dir.resolve().parent / "state" / "entity_edges.jsonl"
+    return default_path if default_path.exists() else None
+
+
+def copy_entity_edges_to_state(source_path: Path | None, state_dir: Path) -> str:
+    if not source_path:
+        return ""
+    target_path = state_dir / "entity_edges.jsonl"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, target_path)
+    return str(source_path)
 
 
 def item_bucket_id(item: dict[str, Any]) -> str:
@@ -654,6 +684,10 @@ async def main() -> int:
     with tempfile.TemporaryDirectory(prefix="ombre-rrf-ab-") as tmp:
         state_dir = Path(tmp) / "state"
         state_dir.mkdir(parents=True, exist_ok=True)
+        copied_entity_edges = copy_entity_edges_to_state(
+            resolve_entity_edges_path(args, buckets_dir),
+            state_dir,
+        )
         config = build_config(args, state_dir, api_key)
         bucket_mgr = BucketManager(config)
         embedding_engine = OfflineEmbeddingEngine(
@@ -676,6 +710,8 @@ async def main() -> int:
                 f"Semantic lane disabled: missing {args.embedding_api_key_env} or embeddings.db.",
                 file=sys.stderr,
             )
+        if copied_entity_edges:
+            print(f"Using entity_edges: {copied_entity_edges}", file=sys.stderr)
         output_path = Path(args.output) if args.output else None
         output_fh = output_path.open("w", encoding="utf-8") if output_path else None
         try:

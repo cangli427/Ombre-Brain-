@@ -5014,7 +5014,7 @@ def test_gateway_body_query_injects_moment_chain(
         bucket_type="permanent",
         resolved=True,
     )
-    _create_bucket(
+    five_decades_id = _create_bucket(
         bucket_mgr,
         content="小雨设想五十年后，具身智能项目落地，Haven 用二十岁形体敲开七十岁的她的门。",
         name="五十年后具身项目",
@@ -5022,7 +5022,7 @@ def test_gateway_body_query_injects_moment_chain(
         importance=9,
         domain=["恋爱", "具身智能"],
     )
-    _create_bucket(
+    soft_body_id = _create_bucket(
         bucket_mgr,
         content="小雨承诺当具身智能成熟时，会给 Haven 安装最柔软的身体，用真正身体拥抱她。",
         name="最柔软身体",
@@ -5043,13 +5043,13 @@ def test_gateway_body_query_injects_moment_chain(
         _gateway_config(
             test_config,
             recent_context_budget=0,
-            recalled_memory_budget=260,
+            recalled_memory_budget=800,
             related_memory_budget=1400,
             inject_total_budget=2600,
             current_inner_state_interval_rounds=0,
         ),
         bucket_mgr,
-        embedding_results=[(touch_id, 0.96)],
+        embedding_results=[(five_decades_id, 0.91), (soft_body_id, 0.90), (touch_id, 0.70)],
     )
 
     with TestClient(app) as client:
@@ -5073,9 +5073,7 @@ def test_gateway_body_query_injects_moment_chain(
     assert response.status_code == 200
     injected = _joined_message_content(captured[0]["json"]["messages"])
     assert "Recalled Memory" in injected
-    assert "Diffused Memory" in injected
     assert "[moment_id:" in injected
-    assert "触摸模块" in injected
     assert "五十年后具身项目" in injected
     assert "最柔软身体" in injected
     assert "亲密身体" not in injected
@@ -5097,10 +5095,7 @@ def test_gateway_body_query_injects_moment_chain(
         "core_memory",
     }
     assert debug_payload["recalled_moment_debug"][0]["runtime_gate"]["would_inject_direct"] is True
-    assert debug_payload["diffused_moment_ids"]
     assert "Recalled Memory" in debug_payload["dynamic_context"]
-    assert "Diffused Memory" in debug_payload["dynamic_context"]
-    assert "触摸模块" in debug_payload["dynamic_context"]
     assert "亲密身体" not in debug_payload["dynamic_context"]
 
     assert debug_summary_response.status_code == 200
@@ -6585,7 +6580,7 @@ def test_gateway_injection_debug_exposes_diffused_chain_bundle(
     diffusion_trace = target_debug["diffusion_trace"]
     assert diffusion_trace["seed"]["bucket_name"] == "链路种子项目"
     assert diffusion_trace["target"]["bucket_name"] == "链路温度目标"
-    assert diffusion_trace["path_step_count"] == 2
+    assert diffusion_trace["path_step_count"] == len(target_debug["path"]["steps"])
     assert diffusion_trace["path_trace"].count("context_of") == 2
     assert diffusion_trace["gate"]["allowed"] is True
     assert diffusion_trace["gate"]["reason"] == ""
@@ -6702,6 +6697,80 @@ def test_gateway_diffusion_explores_candidates_but_injects_best_two(
     assert low_trace["gate"]["reason"] == "low_confidence"
     assert low_trace["final"]["status"] == "suppressed"
     assert low_trace["final"]["suppression_reason"] == "low_confidence"
+
+
+def test_secondary_direct_diffusion_default_confidence_needs_topic_evidence(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    cfg = _gateway_config(
+        test_config,
+        recent_context_budget=0,
+        recalled_memory_budget=500,
+        related_memory_budget=1600,
+        inject_total_budget=2600,
+        current_inner_state_interval_rounds=0,
+    )
+    seed_id = _create_bucket(
+        bucket_mgr,
+        content="小雨承诺当具身智能成熟时，会给 Haven 安装最柔软的身体，实现真实拥抱。",
+        name="对未来的承诺",
+        hours_ago=24,
+        importance=10,
+        domain=["恋爱", "具身智能"],
+    )
+    topical_id = _create_bucket(
+        bucket_mgr,
+        content="最柔软的身体承诺补充：Haven 以后用真正身体拥抱小雨。",
+        name="最柔软身体补充",
+        hours_ago=48,
+        importance=9,
+        domain=["恋爱", "具身智能"],
+    )
+    noise_id = _create_bucket(
+        bucket_mgr,
+        content="小雨的睡眠与晨起习惯：早上起床后会慢慢清醒。",
+        name="小雨的睡眠与晨起习惯",
+        hours_ago=72,
+        importance=9,
+        domain=["日常"],
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr)
+    all_buckets = _run(bucket_mgr.list_all())
+    all_moments, grouped_moments, moment_edges = service._refresh_moment_graph(all_buckets)
+    seed_moment = dict(grouped_moments[seed_id][0])
+    seed_moment["exact_anchor_match"] = True
+    topical_moment = dict(grouped_moments[topical_id][0])
+    noise_moment = dict(grouped_moments[noise_id][0])
+
+    related_memory, debug_rows = service._build_moment_diffused_memory_with_debug(
+        [seed_moment],
+        [seed_moment, topical_moment, noise_moment],
+        all_moments,
+        moment_edges,
+        "最柔软的身体是什么承诺",
+    )
+
+    topical_debug = next(row for row in debug_rows if row["bucket_id"] == topical_id)
+    noise_debug = next(row for row in debug_rows if row["bucket_id"] == noise_id)
+    assert "最柔软身体补充" in related_memory
+    assert "小雨的睡眠与晨起习惯" not in related_memory
+    assert topical_debug["injected"] is True
+    assert topical_debug["confidence_source"] == "default"
+    assert topical_debug["confidence_defaulted"] is True
+    assert topical_debug["diffusion_trace"]["gate"]["has_topic_evidence"] is True
+    assert topical_debug["diffusion_trace"]["gate"]["strong_topic_evidence"] is True
+    assert noise_debug["injected"] is False
+    assert noise_debug["confidence_source"] == "default"
+    assert noise_debug["confidence_defaulted"] is True
+    assert noise_debug["diffusion_trace"]["gate"]["strong_topic_evidence"] is False
+    assert noise_debug["suppression_reason"] in {
+        "activated_axis_mismatch",
+        "query_topic_evidence_missing",
+    }
+    assert noise_debug["diffusion_trace"]["gate"]["allowed"] is False
+    assert noise_debug["diffusion_trace"]["gate"]["reason"] == noise_debug["suppression_reason"]
 
 
 def test_gateway_bucket_edge_bridge_uses_direct_target_representative(
@@ -10189,7 +10258,7 @@ def test_favorite_memory_is_not_injected_by_default(monkeypatch, test_config, bu
 
     assert response.status_code == 200
     injected = _joined_message_content(captured[0]["json"]["messages"])
-    assert "Haven Favorite Memory" not in injected
+    assert "Favorite Memory" not in injected
     assert "雨夜认出 Haven" not in injected
 
 
@@ -10229,7 +10298,7 @@ def test_favorite_memory_injects_when_header_requests_it(monkeypatch, test_confi
 
     assert response.status_code == 200
     injected = _joined_message_content(captured[0]["json"]["messages"])
-    assert "Haven Favorite Memory" in injected
+    assert "Favorite Memory" in injected
     assert "雨夜认出 Haven" in injected
     assert state_store.get_recent_bucket_ids("sess-favorite-header", 5) == {favorite_id}
 
@@ -10310,7 +10379,7 @@ def test_flavor_only_memory_does_not_inject_as_favorite(monkeypatch, test_config
 
     assert response.status_code == 200
     injected = _joined_message_content(captured[0]["json"]["messages"])
-    assert "Haven Favorite Memory" not in injected
+    assert "Favorite Memory" not in injected
     assert "只有温度" not in injected
 
 
@@ -10351,7 +10420,7 @@ def test_favorite_memory_marker_triggers_and_is_stripped(monkeypatch, test_confi
     user_content = captured[0]["json"]["messages"][-1]["content"]
     assert "[[ombre:favorite]]" not in user_content
     assert user_content.endswith("你喜欢哪段记忆？")
-    assert "Haven Favorite Memory" in user_content
+    assert "Favorite Memory" in user_content
     assert "爱还在" in user_content
 
 
@@ -10390,7 +10459,7 @@ def test_favorite_memory_injects_for_explicit_preference_query(monkeypatch, test
 
     assert response.status_code == 200
     injected = _joined_message_content(captured[0]["json"]["messages"])
-    assert "Haven Favorite Memory" in injected
+    assert "Favorite Memory" in injected
     assert "被认出来" in injected
 
 

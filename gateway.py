@@ -9356,7 +9356,6 @@ class GatewayService:
             )
         ).lower()
         sensitive_terms = (
-            "亲密身体",
             "private intimacy",
             "intimacy context",
             "欲望",
@@ -10164,7 +10163,13 @@ class GatewayService:
                 return
             row["bucket_id"] = bucket_id
             row["moment_id"] = moment_id
-            row["has_topic_evidence"] = self._moment_has_query_topic_evidence(query_text, moment)
+            topic_evidence_terms = self._moment_query_topic_evidence_terms(query_text, moment)
+            row["topic_evidence_terms"] = topic_evidence_terms
+            row["strong_topic_evidence"] = self._topic_evidence_terms_are_strong(topic_evidence_terms)
+            row["has_topic_evidence"] = bool(topic_evidence_terms) or self._moment_has_query_topic_evidence(
+                query_text,
+                moment,
+            )
             row["runtime_allowed"] = can_moment_be_related_target(
                 moment,
                 explicit_lookup=allow_archive_targets,
@@ -10193,14 +10198,17 @@ class GatewayService:
             query_plan=query_plan,
             limit=explore_limit,
         ):
-            semantic_confidence = self._moment_candidate_confidence(moment, default=0.72)
-            if getattr(query_plan, "wants_body_chain", False):
-                semantic_confidence = max(semantic_confidence, 0.72)
+            semantic_confidence, confidence_source = self._secondary_direct_candidate_confidence(
+                moment,
+                default=0.72,
+            )
             add_candidate(
                 {
                     "moment": moment,
                     "why": "semantic_neighbor",
                     "confidence": semantic_confidence,
+                    "confidence_source": confidence_source,
+                    "confidence_defaulted": confidence_source == "default",
                     "note": "related_query_hit",
                     "source": "secondary_direct",
                     "path": None,
@@ -10460,7 +10468,7 @@ class GatewayService:
                 or has_source_record_topic_evidence
                 or explicit_edge_axis_bypass
                 or strong_local_chain
-                or (why == "semantic_neighbor" and confidence >= self.high_confidence_semantic_score)
+                or self._semantic_neighbor_has_strong_confidence(row)
             ):
                 return False, "activated_axis_mismatch"
         if (
@@ -10477,9 +10485,15 @@ class GatewayService:
         if why in {"same_topic", "date_neighbor"}:
             return True, ""
         if row.get("has_topic_evidence"):
+            if (
+                why == "semantic_neighbor"
+                and row.get("confidence_defaulted")
+                and not row.get("strong_topic_evidence")
+            ):
+                return False, "query_topic_evidence_missing"
             return True, ""
         if why == "semantic_neighbor":
-            if confidence >= self.high_confidence_semantic_score:
+            if self._semantic_neighbor_has_strong_confidence(row):
                 return True, ""
             return False, "query_topic_evidence_missing"
         if why == "explicit_edge":
@@ -10494,6 +10508,41 @@ class GatewayService:
             return False
         query = str(getattr(query_plan, "query", "") or "")
         return bool(query and self.recall_policy.has_axis_relation_marker(query))
+
+    def _semantic_neighbor_has_strong_confidence(self, row: dict[str, Any]) -> bool:
+        if str(row.get("why") or "") != "semantic_neighbor":
+            return False
+        if row.get("confidence_defaulted"):
+            return False
+        return self._safe_float(row.get("confidence"), 0.0) >= self.high_confidence_semantic_score
+
+    def _moment_query_topic_evidence_terms(self, query: str, moment: dict) -> list[str]:
+        field_key = self._compact_lookup_key(self._moment_search_fields(moment))
+        if not field_key:
+            return []
+        matched: list[str] = []
+        seen: set[str] = set()
+        for term in self._specific_query_terms(query):
+            cleaned = str(term or "").strip()
+            key = self._compact_lookup_key(cleaned)
+            if not key or key in seen:
+                continue
+            if len(key) < 2 and not re.search(r"\d", key):
+                continue
+            if key in field_key:
+                matched.append(cleaned)
+                seen.add(key)
+        return matched
+
+    def _topic_evidence_terms_are_strong(self, terms: list[str]) -> bool:
+        keys = [
+            self._compact_lookup_key(term)
+            for term in terms
+            if self._compact_lookup_key(term)
+        ]
+        if any(len(key) >= 4 for key in keys):
+            return True
+        return len({key for key in keys if len(key) >= 2}) >= 2
 
     def _diffusion_candidate_rank_key(self, row: dict[str, Any]) -> tuple:
         why_priority = {
@@ -10534,11 +10583,15 @@ class GatewayService:
             {
                 "why": str(row.get("why") or ""),
                 "confidence": self._safe_float(row.get("confidence"), 0.0),
+                "confidence_source": str(row.get("confidence_source") or ""),
+                "confidence_defaulted": bool(row.get("confidence_defaulted")),
                 "activation": self._safe_float(row.get("activation"), 0.0),
                 "source": str(row.get("source") or ""),
                 "injected": bool(row.get("injected")),
                 "suppression_reason": str(row.get("suppression_reason") or ""),
                 "has_topic_evidence": bool(row.get("has_topic_evidence")),
+                "topic_evidence_terms": list(row.get("topic_evidence_terms") or []),
+                "strong_topic_evidence": bool(row.get("strong_topic_evidence")),
                 "reading_note": row.get("reading_note") if isinstance(row.get("reading_note"), dict) else {},
                 "diffusion_trace": self._format_diffusion_candidate_trace(row, moment_map),
             }
@@ -10577,6 +10630,8 @@ class GatewayService:
             "source": str(row.get("source") or ""),
             "why": str(row.get("why") or ""),
             "confidence": self._safe_float(row.get("confidence"), 0.0),
+            "confidence_source": str(row.get("confidence_source") or ""),
+            "confidence_defaulted": bool(row.get("confidence_defaulted")),
             "activation": self._safe_float(row.get("activation"), 0.0),
             "path_len": int(row.get("path_len") or 0),
             "path_step_count": len(path_steps),
@@ -10595,6 +10650,8 @@ class GatewayService:
                 "reason": gate_reason,
                 "runtime_allowed": bool(row.get("runtime_allowed")),
                 "has_topic_evidence": bool(row.get("has_topic_evidence")),
+                "topic_evidence_terms": list(row.get("topic_evidence_terms") or []),
+                "strong_topic_evidence": bool(row.get("strong_topic_evidence")),
             },
             "final": {
                 "status": final_status,
@@ -10689,6 +10746,21 @@ class GatewayService:
             if confidence > 0:
                 return self._clamp(confidence, 0.0, 1.0)
         return self._clamp(default, 0.0, 1.0)
+
+    def _secondary_direct_candidate_confidence(
+        self,
+        moment: dict,
+        *,
+        default: float = 0.72,
+    ) -> tuple[float, str]:
+        for key in ("rerank_score", "semantic_score"):
+            value = moment.get(key)
+            if value is None:
+                continue
+            confidence = self._safe_float(value, -1.0)
+            if confidence > 0:
+                return self._clamp(confidence, 0.0, 1.0), key
+        return self._clamp(default, 0.0, 1.0), "default"
 
     def _diffusion_path_has_date_neighbor(
         self,
@@ -12027,11 +12099,11 @@ class GatewayService:
             if key and key in DOMAIN_SENTINEL_ALLOWED_DOMAINS and key not in domains:
                 domains.append(key)
 
-        if any(term in compact for term in ("火焰", "羽毛", "鸟", "折角", "五十年", "暗号", "意象")):
+        if any(term in compact for term in ("暗号", "意象")):
             add("relationship")
         if any(term in compact for term in ("亲密", "身体", "欲望", "色色", "接吻", "抱")):
             add("intimacy")
-        if any(term in compact for term in ("人机恋", "身份", "称呼", "承诺", "边界", "同一个haven")):
+        if any(term in compact for term in ("人机恋", "身份", "称呼", "承诺", "边界")):
             add("relationship")
         if any(term in compact for term in ("语气", "怎么回", "怎么接", "吵架", "难过", "哭", "安慰")):
             add("relationship")
@@ -14851,7 +14923,7 @@ class GatewayService:
             favorite_title = (
                 f"{favorite_title_name} Favorite Memory"
                 if favorite_title_name and favorite_title_name not in {"AI", "assistant"}
-                else "Haven Favorite Memory"
+                else "Favorite Memory"
             )
             add_section(favorite_title, favorite_memory)
             add_section("Dream Context", dream_context)

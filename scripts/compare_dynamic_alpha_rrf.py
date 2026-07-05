@@ -420,7 +420,11 @@ def compact_diffusion_debug(row: dict[str, Any]) -> dict[str, Any]:
         "why": str(row.get("why") or ""),
         "source": str(row.get("source") or ""),
         "confidence": round(float(row.get("confidence") or 0.0), 4),
+        "confidence_source": str(row.get("confidence_source") or ""),
+        "confidence_defaulted": bool(row.get("confidence_defaulted")),
         "activation": round(float(row.get("activation") or 0.0), 4),
+        "topic_evidence_terms": list(row.get("topic_evidence_terms") or []),
+        "strong_topic_evidence": bool(row.get("strong_topic_evidence")),
         "injected": bool(row.get("injected")),
         "suppression_reason": str(row.get("suppression_reason") or ""),
         "recall_why": compact_recall_why(row.get("recall_why") or {}),
@@ -619,7 +623,8 @@ def print_result(result: dict[str, Any], *, top: int) -> None:
             print(
                 f"  injected={row['injected']} gate={trace.get('gate_reason') or '-'} "
                 f"final={trace.get('final_status') or '-'}:{trace.get('final_reason') or '-'} "
-                f"why={row.get('why') or '-'} conf={row.get('confidence'):.2f} "
+                f"why={row.get('why') or '-'} conf={row.get('confidence'):.2f}/{row.get('confidence_source') or '-'} "
+                f"topic={','.join(row.get('topic_evidence_terms') or []) or '-'} "
                 f"{trace.get('seed_bucket_name') or '-'} -> {row['bucket_name']} "
                 f"path={trace.get('path_trace') or '-'}"
             )

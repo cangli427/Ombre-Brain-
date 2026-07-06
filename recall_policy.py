@@ -20,7 +20,7 @@ from memory_relevance import (
     recall_topic_query,
 )
 from identity import identity_names
-from query_terms import RECALL_SYSTEM_META_TERMS
+from query_terms import RECALL_SYSTEM_META_TERMS, identity_address_terms
 
 
 CONTEXT_ONLY_SECTIONS = frozenset({"affect_anchor", "favorite_reason", "comment", "followup"})
@@ -1016,6 +1016,7 @@ ANCHOR_TERM_VARIANTS = {
     "担忧": ("担忧", "担心", "怕", "害怕"),
     "忘记": ("忘记", "忘", "遗忘", "记忆丢失", "记忆断掉"),
 }
+ANCHOR_OPTIONAL_WEAK_TERMS = frozenset({"喜欢"})
 
 
 def build_query_anchor_plan(
@@ -1107,12 +1108,20 @@ def _emotional_must_groups(emotional_plan: Any) -> tuple[tuple[str, ...], ...]:
     forget_worry_group = _emotional_forget_worry_group(event_terms, weak_terms)
     if forget_worry_group:
         groups.append(forget_worry_group)
-    if event_anchor and weak_terms:
-        groups.append(_dedupe_group([event_anchor, weak_terms[0]]))
+    binding_weak_terms = tuple(term for term in weak_terms if _anchor_weak_term_requires_binding(term))
+    if event_anchor and binding_weak_terms:
+        groups.append(_dedupe_group([event_anchor, binding_weak_terms[0]]))
+    elif event_anchor:
+        groups.append(_dedupe_group([event_anchor]))
     elif not groups and weak_terms:
         groups.append(_dedupe_group([weak_terms[0]]))
 
     return tuple(dict.fromkeys(group for group in groups if group))
+
+
+def _anchor_weak_term_requires_binding(term: str) -> bool:
+    key = _compact_anchor_term(term)
+    return bool(key and key not in ANCHOR_OPTIONAL_WEAK_TERMS)
 
 
 def _emotional_forget_worry_group(
@@ -1155,7 +1164,25 @@ def _primary_emotional_event_term(event_terms: tuple[str, ...]) -> str:
         if not any(other != key and other in key for other in compact_terms)
     ]
     candidates = candidates or [term for term, _key in keyed]
+    non_address_candidates = [
+        term
+        for term in candidates
+        if not _anchor_is_identity_address_term(term)
+    ]
+    if non_address_candidates:
+        candidates = non_address_candidates
     return sorted(candidates, key=lambda item: (len(_compact_anchor_term(item)), len(item)))[0]
+
+
+def _anchor_is_identity_address_term(term: str) -> bool:
+    key = _compact_anchor_term(term)
+    if not key:
+        return False
+    return key in {
+        _compact_anchor_term(value)
+        for value in identity_address_terms(identity_names(), include_legacy_ai=True)
+        if _compact_anchor_term(value)
+    }
 
 
 def _candidate_anchor_text(node: dict) -> str:

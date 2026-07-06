@@ -1151,6 +1151,8 @@ def test_daily_chat_memory_prompt_uses_self_and_domain_context(test_config):
     assert "重要事件" in prompt
     assert "事件/项目进度" in prompt
     assert "还需要关注的事" in prompt
+    assert "query_cache" in prompt
+    assert "recent_raw_context" in prompt
     assert "同一项目里的不同进度、风险或后续关注点可以拆成不同候选" in prompt
     assert "普通称呼或昵称不算" in prompt
     assert "project" in prompt

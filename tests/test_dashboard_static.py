@@ -26,6 +26,12 @@ def test_dashboard_comment_enter_submit_has_no_visible_send_key():
     assert 'aria-label="发送"' not in form_block
 
 
+def test_dashboard_chat_memory_module_has_cache_bust_for_edit_ui():
+    html = Path("dashboard.html").read_text(encoding="utf-8")
+
+    assert "loadDashboardModule('/dashboard-assets/chat-memory.js?v=20260706-chat-memory-edit');" in html
+
+
 def test_dashboard_bucket_detail_loads_moment_diagnostics():
     html = Path("dashboard.html").read_text(encoding="utf-8")
     detail_block = html.split("async function showDetail", 1)[1].split("function startBucketContentEdit", 1)[0]

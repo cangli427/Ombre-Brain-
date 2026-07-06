@@ -2335,6 +2335,28 @@ def test_daily_chat_memory_normalization_rejects_raw_probe_candidate(test_config
     assert candidates == []
 
 
+def test_daily_chat_memory_normalization_rejects_raw_rule_snippet(test_config):
+    cfg = _no_api_config(test_config)
+    engine = ReflectionEngine(cfg)
+
+    candidates = engine._normalize_daily_chat_memory_candidates(
+        "2026-07-05",
+        [
+            {
+                "should_write": True,
+                "kind": "project_state",
+                "title": "项目状态：```text if query co",
+                "content": "项目状态：```text if query contains 刚才/刚刚/换窗/上一窗口: bypass query_cache force recent_raw_context ``` 这个分支先绕过缓存。",
+                "confidence": 0.7,
+                "source_event_ids": [667, 668],
+            }
+        ],
+        [{"id": 1, "raw_event_ids": [667, 668]}],
+    )
+
+    assert candidates == []
+
+
 def test_daily_chat_memory_title_uses_identity_config(test_config):
     cfg = _no_api_config(test_config)
     cfg["identity"] = {

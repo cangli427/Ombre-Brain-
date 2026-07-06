@@ -2701,6 +2701,16 @@ class ReflectionEngine:
         if not text:
             return True
         lowered = text.lower()
+        raw_snippet_markers = [
+            "```",
+            "query_cache",
+            "recent_raw_context",
+            "if query contains",
+            "bypass query",
+            "force recent",
+        ]
+        if any(marker in lowered for marker in raw_snippet_markers):
+            return True
         noise_markers = [
             "笔友都有谁",
             "还记得吗",

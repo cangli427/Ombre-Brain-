@@ -2369,6 +2369,9 @@ class GatewayService:
                 pre_domain_skip_broad
                 or domain_sentinel_skip_broad
             )
+            recall_plan_skip_reason = str(
+                (query_planner_debug.get("recall_query_plan") or {}).get("skip_reason") or ""
+            )
             if needs_handoff_first:
                 query_planner_debug["skip_reason"] = handoff_skip_reason
                 if is_session_start_handoff_query and not is_handoff_trigger_query:
@@ -2410,7 +2413,11 @@ class GatewayService:
             elif domain_sentinel_skip_broad:
                 query_planner_debug["skip_reason"] = "domain_sentinel_skip"
             elif low_signal_auto_recall:
-                query_planner_debug["skip_reason"] = "low_signal_auto_recall"
+                query_planner_debug["skip_reason"] = (
+                    recall_plan_skip_reason
+                    if recall_plan_skip_reason == "recall_meta_without_target"
+                    else "low_signal_auto_recall"
+                )
             if self.persona_engine.enabled and self._should_inject_interval(
                 session_id,
                 self.current_inner_state_interval_rounds,

@@ -257,6 +257,35 @@ def test_word_map_weak_hint_terms_do_not_expand_neighbors(tmp_path):
     assert all("恋爱" not in item["term"] for item in hints["neighbors"])
 
 
+def test_word_map_game_category_terms_are_weak_by_default(tmp_path):
+    store = WordMapStore(_config(tmp_path, weak_hint_weight=0.2))
+    store.rebuild(
+        [
+            _bucket(
+                "direct",
+                "小雨提到一个游戏类互动。",
+                name="普通游戏记录",
+                keywords=["游戏", "碰碰游戏"],
+            ),
+            _bucket(
+                "specific-neighbor",
+                "碰碰游戏是一条更具体的相邻记录。",
+                name="碰碰游戏",
+                keywords=["碰碰游戏"],
+            ),
+        ]
+    )
+
+    hints = store.hint_buckets_for_terms(["游戏"], neighbor_limit=6, bucket_limit=10)
+
+    assert "direct" in hints["bucket_scores"]
+    assert hints["bucket_scores"]["direct"] <= 0.2
+    assert hints["evidence"]["direct"]["direct_terms"] == ["游戏"]
+    assert hints["evidence"]["direct"]["low_frequency_terms"] == []
+    assert "specific-neighbor" not in hints["bucket_scores"]
+    assert all("碰碰游戏" not in item["term"] for item in hints["neighbors"])
+
+
 def test_word_map_configured_weak_hint_terms_do_not_expand_neighbors(tmp_path):
     store = WordMapStore(_config(tmp_path, weak_hint_terms=["泛关系"], weak_hint_weight=0.2))
     store.rebuild(

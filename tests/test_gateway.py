@@ -12011,6 +12011,56 @@ def test_word_map_hint_uses_activity_low_frequency_terms_but_skips_vague_queries
     assert planner_debug["word_map_hints"]["low_frequency_bucket_ids"] == [direct_id]
 
 
+def test_gateway_game_category_seed_is_not_hard_evidence(
+    monkeypatch, test_config, bucket_mgr
+):
+    bucket_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n小雨喜欢设定亲密游戏规则，也喜欢把互动做成游戏。",
+        name="触碰游戏",
+        hours_ago=12,
+        tags=["游戏", "game"],
+    )
+    _, service, _, _ = _build_service(monkeypatch, _gateway_config(test_config), bucket_mgr)
+    bucket = _run(bucket_mgr.get(bucket_id))
+    item = {
+        "bucket": bucket,
+        "score": 0.82,
+        "semantic_score": 0.0,
+        "keyword_score": 0.78,
+        "planner_lexical_match": True,
+        "word_map_hint": True,
+        "word_map_score": 0.2,
+        "word_map_terms": ["游戏"],
+        "word_map_category_seed_terms": ["游戏"],
+        "low_frequency_match": True,
+        "low_frequency_terms": ["游戏"],
+        "low_frequency_category_terms": ["游戏"],
+        "matched_query_terms": ["游戏"],
+    }
+
+    labels = service._bucket_evidence_labels("之前的炒股游戏还没玩呢", item)
+
+    assert "category_seed" in labels
+    assert "keyword_match" not in labels
+    assert "entity_match" not in labels
+    assert service._hard_bucket_evidence_labels(labels) == []
+    assert service._weak_bucket_evidence_block_reason(labels) == "generic_category_only"
+    assert not service._word_map_direct_signal(item)
+
+    specific = {
+        **item,
+        "word_map_terms": ["虚拟炒股"],
+        "word_map_category_seed_terms": [],
+        "low_frequency_terms": ["虚拟炒股"],
+        "low_frequency_direct_terms": ["虚拟炒股"],
+        "low_frequency_category_terms": [],
+        "matched_query_terms": ["炒股"],
+    }
+    assert service._word_map_direct_signal(specific)
+    assert "entity_match" in service._bucket_evidence_labels("之前的炒股游戏还没玩呢", specific)
+
+
 def test_word_map_rare_name_match_can_admit_exact_title_when_other_paths_miss(
     monkeypatch, test_config, bucket_mgr
 ):

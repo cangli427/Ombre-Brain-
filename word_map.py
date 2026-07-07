@@ -234,6 +234,10 @@ DEFAULT_OVERVIEW_HUB_TERMS = ()
 DEFAULT_WEAK_HINT_TERMS = {
     "人机恋",
     "恋爱",
+    "游戏",
+    "game",
+    "games",
+    "玩法",
 }
 DEFAULT_WEAK_HINT_WEIGHT = 0.25
 DEFAULT_RARE_NAME_MAX_BUCKET_COUNT = 3

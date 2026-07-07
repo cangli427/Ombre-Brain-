@@ -1669,6 +1669,55 @@ def test_gateway_recall_meta_terms_still_allow_named_target(
     assert any(term in locatable_terms for term in ("小雨", "求职", "小雨求职困境"))
 
 
+def test_gateway_bucket_admission_blocks_semantic_only_without_hard_evidence(
+    monkeypatch, test_config, bucket_mgr
+):
+    bucket_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n小雨说虚拟炒股先只做模拟记录，不接真实交易。",
+        name="虚拟炒股记录",
+        hours_ago=5,
+    )
+    _, service, _, _ = _build_service(
+        monkeypatch,
+        _gateway_config(
+            test_config,
+            core_memory_budget=0,
+            recent_context_budget=0,
+            current_inner_state_interval_rounds=0,
+            relationship_weather_interval_rounds=0,
+            favorite_memory_interval_rounds=0,
+            query_planner_enabled=False,
+        ),
+        bucket_mgr,
+        embedding_results=[],
+    )
+    bucket = _run(bucket_mgr.get(bucket_id))
+    item = {
+        "bucket": bucket,
+        "score": 0.99,
+        "semantic_score": 0.99,
+        "keyword_score": 0.0,
+    }
+
+    monkeypatch.setattr(
+        service.recall_policy,
+        "assess",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            admit_direct=True,
+            reason="semantic_test_admitted",
+            debug={},
+        ),
+    )
+
+    assert service._admit_bucket_for_recall("模拟投资后来怎样", item) is False
+    assert item["admission_reason"] == "semantic_only"
+    assert item["blocked_reason"] == "semantic_only"
+    assert item["evidence_labels"] == ["semantic_hit"]
+    assert item["hard_evidence_labels"] == []
+    assert item["recall_policy_debug"]["blocked_reason"] == "semantic_only"
+
+
 def test_gateway_current_time_status_reaction_does_not_recall_old_alarm_memory(
     monkeypatch, test_config, bucket_mgr
 ):
@@ -8263,8 +8312,10 @@ def test_gateway_date_recall_accepts_quoted_explicit_date_topic(
     injected = _joined_message_content(payload["messages"])
 
     assert service._query_requests_date_recall("2026.06.15 蓝雨档案") is False
+    assert service._query_requests_date_recall("2026.06.15 + 蓝雨档案") is False
     assert service._query_requests_date_recall("2026.06.15 “蓝雨档案”") is True
     assert service._query_requests_date_recall("昨天 蓝雨档案") is False
+    assert service._query_requests_date_recall("昨天 + 蓝雨档案") is False
     assert service._query_requests_date_recall("昨天 “蓝雨档案”") is True
     assert service._query_requests_date_recall("这类日期（昨天/前天）走的是原文召回") is False
     assert recalled_ids == [bucket_id]
@@ -8275,6 +8326,151 @@ def test_gateway_date_recall_accepts_quoted_explicit_date_topic(
     assert debug["date_recall_injected"] is True
     assert debug["date_recall_debug"]["topic_terms"] == ["蓝雨档案"]
     assert debug["date_recall_bucket_ids"] == [bucket_id]
+    assert debug["query_planner_debug"]["skip_reason"] == "date_recall"
+
+
+def test_gateway_quoted_date_topic_uses_raw_events_and_blocks_nearby_semantic(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    target = datetime(2026, 7, 3, 21, 5, tzinfo=timezone(timedelta(hours=8)))
+    nearby_bucket_id = _create_bucket(
+        bucket_mgr,
+        content="虚拟炒股是 7 月 5 日的邻近日摘要，不能冒充 7 月 3 日原文。",
+        name="虚拟炒股邻近日摘要",
+        hours_ago=1,
+        date="2026-07-05",
+    )
+    cfg = _gateway_config(
+        test_config,
+        recent_context_budget=0,
+        recalled_memory_budget=500,
+        related_memory_budget=0,
+        inject_total_budget=1800,
+        current_inner_state_interval_rounds=0,
+        relationship_weather_interval_rounds=0,
+        favorite_memory_interval_rounds=0,
+        date_recall_enabled=True,
+        date_recall_budget=500,
+        date_recall_max_turns=4,
+        date_recall_max_buckets=2,
+    )
+    embedding_queries: list[str] = []
+    _, service, state_store, _ = _build_service(
+        monkeypatch,
+        cfg,
+        bucket_mgr,
+        embedding_results=[(nearby_bucket_id, 0.99)],
+        embedding_queries=embedding_queries,
+    )
+    state_store.record_success("sess-quoted-date-raw", [], completed_at=datetime.now() - timedelta(minutes=5))
+    service.raw_event_store.ingest(
+        [
+            {
+                "source": "gateway",
+                "source_event_id": "haven_xiaoyu:quoted-date:1:user",
+                "role": "user",
+                "text": "7月3号我们测试了虚拟炒股，先买一支模拟股。",
+                "created_at": target.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                "conversation_id": "quoted-date",
+                "session_id": "quoted-date",
+                "client": "unit-test",
+                "metadata": {"profile_id": "haven_xiaoyu", "round_id": 1},
+            },
+            {
+                "source": "gateway",
+                "source_event_id": "haven_xiaoyu:quoted-date:1:assistant",
+                "role": "assistant",
+                "text": "我回的是先别加真实交易，只做虚拟炒股记录。",
+                "created_at": target.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                "conversation_id": "quoted-date",
+                "session_id": "quoted-date",
+                "client": "unit-test",
+                "metadata": {"profile_id": "haven_xiaoyu", "round_id": 1},
+            },
+        ],
+        source="gateway",
+    )
+
+    payload, recalled_ids, debug = _run(
+        service.prepare_payload(
+            {"messages": [{"role": "user", "content": "2026.07.03 “虚拟炒股”"}]},
+            "sess-quoted-date-raw",
+            include_debug=True,
+        )
+    )
+    injected = _joined_message_content(payload["messages"])
+
+    assert service._query_requests_date_recall("2026.07.03 虚拟炒股") is False
+    assert service._query_requests_date_recall("2026.07.03 + 虚拟炒股") is False
+    assert service._query_requests_date_recall("2026.07.03 “虚拟炒股”") is True
+    assert recalled_ids == []
+    assert embedding_queries == []
+    assert "Date Recall" in injected
+    assert "chat_transcript:" in injected
+    assert "7月3号我们测试了虚拟炒股" in injected
+    assert "7 月 5 日的邻近日摘要" not in injected
+    assert debug["date_recall_debug"]["topic_terms"] == ["虚拟炒股"]
+    assert debug["date_recall_debug"]["protected_phrases"] == ["虚拟炒股"]
+    assert debug["date_recall_debug"]["turn_source"] == "raw_events"
+    assert debug["date_recall_debug"]["raw_transcript_hit_count"] == 1
+    assert debug["date_recall_debug"]["selected_bucket_ids"] == []
+    assert "raw_transcript" in debug["date_recall_debug"]["candidate_sources"]
+    assert "semantic_hit" not in debug["date_recall_debug"]["candidate_sources"]
+
+
+def test_gateway_quoted_date_topic_without_same_day_hit_does_not_fall_back_to_semantic(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    nearby_bucket_id = _create_bucket(
+        bucket_mgr,
+        content="虚拟炒股是 2026-07-05 的邻近日摘要，不能回答 2026-07-03 的 exact query。",
+        name="虚拟炒股邻近日摘要",
+        hours_ago=1,
+        date="2026-07-05",
+    )
+    cfg = _gateway_config(
+        test_config,
+        recent_context_budget=0,
+        recalled_memory_budget=500,
+        related_memory_budget=0,
+        inject_total_budget=1800,
+        current_inner_state_interval_rounds=0,
+        relationship_weather_interval_rounds=0,
+        favorite_memory_interval_rounds=0,
+        date_recall_enabled=True,
+        date_recall_budget=500,
+        date_recall_max_turns=4,
+        date_recall_max_buckets=2,
+    )
+    embedding_queries: list[str] = []
+    _, service, state_store, _ = _build_service(
+        monkeypatch,
+        cfg,
+        bucket_mgr,
+        embedding_results=[(nearby_bucket_id, 0.99)],
+        embedding_queries=embedding_queries,
+    )
+    state_store.record_success("sess-quoted-date-no-hit", [], completed_at=datetime.now() - timedelta(minutes=5))
+
+    payload, recalled_ids, debug = _run(
+        service.prepare_payload(
+            {"messages": [{"role": "user", "content": "2026.07.03 “虚拟炒股”"}]},
+            "sess-quoted-date-no-hit",
+            include_debug=True,
+        )
+    )
+    injected = _joined_message_content(payload["messages"])
+
+    assert recalled_ids == []
+    assert embedding_queries == []
+    assert "Date Recall" not in injected
+    assert "邻近日摘要" not in injected
+    assert debug["date_recall_debug"]["skip_reason"] == "no_material"
+    assert debug["date_recall_debug"]["candidate_sources"] == ["exact_date", "protected_phrase"]
     assert debug["query_planner_debug"]["skip_reason"] == "date_recall"
 
 
@@ -8696,6 +8892,13 @@ def test_gateway_date_recall_preserves_quoted_topic_and_strips_test_shell(
 ):
     target = datetime(2026, 6, 15, 20, 15, tzinfo=timezone(timedelta(hours=8)))
     created_at = target.astimezone(timezone.utc)
+    _create_bucket(
+        bucket_mgr,
+        content="痛痛飞的同日摘要不该和 raw transcript 混在一起。",
+        name="痛痛飞同日摘要",
+        hours_ago=1,
+        date="2026-06-15",
+    )
     cfg = _gateway_config(
         test_config,
         recent_context_budget=0,
@@ -8759,9 +8962,15 @@ def test_gateway_date_recall_preserves_quoted_topic_and_strips_test_shell(
     assert recalled_ids == []
     assert embedding_queries == []
     assert "痛痛飞" in injected
+    assert "同日摘要不该" not in injected
     assert debug["date_recall_injected"] is True
     assert debug["date_recall_debug"]["topic_terms"] == ["痛痛飞"]
+    assert debug["date_recall_debug"]["protected_phrases"] == ["痛痛飞"]
     assert debug["date_recall_debug"]["turn_source"] == "raw_events"
+    assert debug["date_recall_debug"]["selected_bucket_ids"] == []
+    assert "protected_phrase" in debug["date_recall_debug"]["candidate_sources"]
+    assert "raw_transcript" in debug["date_recall_debug"]["candidate_sources"]
+    assert "same_day_bucket" not in debug["date_recall_debug"]["candidate_sources"]
     assert debug["query_planner_debug"]["skip_reason"] == "date_recall"
 
 

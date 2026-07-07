@@ -7211,6 +7211,9 @@ class GatewayService:
             "date": "",
             "label": "",
             "topic_terms": [],
+            "protected_phrases": [],
+            "candidate_sources": [],
+            "raw_transcript_hit_count": 0,
             "turn_count": 0,
             "turn_source": "",
             "bucket_count": 0,
@@ -7239,6 +7242,7 @@ class GatewayService:
 
         date_key = hint["date"]
         start_at, end_at = self._date_recall_range(date_key)
+        protected_phrases = self._date_recall_protected_topic_terms(query_text)
         topic_terms = self._date_recall_topic_terms(query_text)
         role_safe_transcript_required = self._query_requires_role_safe_date_transcript(query_text)
         turns, turn_source = self._date_recall_turns_for_range(
@@ -7247,16 +7251,33 @@ class GatewayService:
             topic_terms,
             match_assistant_text=role_safe_transcript_required,
         )
-        include_buckets = (not role_safe_transcript_required) and bool(topic_terms)
+        exact_phrase_raw_hit = bool(turns) and bool(protected_phrases)
+        include_buckets = (
+            (not role_safe_transcript_required)
+            and bool(topic_terms)
+            and not exact_phrase_raw_hit
+        )
         buckets = self._date_recall_buckets_for_date(all_buckets, date_key, topic_terms) if include_buckets else []
         buckets = buckets[: self.date_recall_max_buckets]
         bucket_ids = [str(bucket.get("id") or "") for bucket in buckets if bucket.get("id")]
+        candidate_sources = ["exact_date"]
+        if protected_phrases:
+            candidate_sources.append("protected_phrase")
+        if turn_source == "raw_events":
+            candidate_sources.append("raw_transcript")
+        elif turn_source:
+            candidate_sources.append(turn_source)
+        if buckets:
+            candidate_sources.append("same_day_bucket")
 
         debug.update(
             {
                 "date": date_key,
                 "label": hint["label"],
                 "topic_terms": topic_terms,
+                "protected_phrases": protected_phrases,
+                "candidate_sources": candidate_sources,
+                "raw_transcript_hit_count": len(turns) if turn_source == "raw_events" else 0,
                 "turn_count": len(turns),
                 "turn_source": turn_source,
                 "bucket_count": len(buckets),
@@ -7277,6 +7298,8 @@ class GatewayService:
             lines.append("topic_filter: " + ", ".join(topic_terms[:8]))
         if role_safe_transcript_required:
             lines.append("speaker_policy: use transcript speaker labels only; do not infer speakers from summaries.")
+        if buckets and not turns:
+            lines.append("evidence_policy: memory_buckets are same-day summaries, not transcript; do not quote or infer speakers from them.")
         if turns:
             lines.append("chat_transcript:")
             for turn in reversed(turns):
@@ -13850,6 +13873,9 @@ class GatewayService:
         return {
             key: item.get(key)
             for key in (
+                "evidence_labels",
+                "hard_evidence_labels",
+                "blocked_reason",
                 "score",
                 "semantic_score",
                 "keyword_score",
@@ -13904,6 +13930,75 @@ class GatewayService:
                 or item.get("low_frequency_match")
             )
         )
+
+    @staticmethod
+    def _dedupe_evidence_labels(labels: list[str]) -> list[str]:
+        output: list[str] = []
+        seen: set[str] = set()
+        for label in labels or []:
+            text = str(label or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            output.append(text)
+        return output
+
+    def _bucket_evidence_labels(self, query: str, item: dict) -> list[str]:
+        if not isinstance(item, dict):
+            return []
+        bucket = item.get("bucket") if isinstance(item.get("bucket"), dict) else {}
+        labels: list[str] = []
+        if item.get("exact_anchor_match") or self._safe_float(item.get("exact_anchor_score"), 0.0) > 0:
+            labels.append("exact_anchor")
+        protected_phrases = extract_protected_phrases(query)
+        if protected_phrases and isinstance(bucket, dict):
+            bucket_text_key = self._compact_lookup_key(self._date_recall_bucket_text(bucket))
+            if any(self._compact_lookup_key(phrase) in bucket_text_key for phrase in protected_phrases):
+                labels.append("protected_phrase")
+        if item.get("planner_lexical_match"):
+            labels.append("entity_match")
+        if item.get("rare_name_match") or item.get("low_frequency_match"):
+            labels.append("entity_match")
+        if item.get("explicit_relation_edge_match") or self._entity_edge_direct_signal(item):
+            labels.append("entity_match")
+        if (
+            isinstance(bucket, dict)
+            and self._safe_float(item.get("keyword_score"), 0.0) > 0
+            and self._bucket_has_query_topic_evidence(query, bucket)
+        ):
+            labels.append("keyword_match")
+        if self._safe_float(item.get("semantic_score"), 0.0) > 0:
+            labels.append("semantic_hit")
+        if (
+            item.get("word_map_hint")
+            or self._safe_float(item.get("word_map_score"), 0.0) > 0
+            or item.get("entity_edge_match")
+        ):
+            labels.append("graph_related")
+        return self._dedupe_evidence_labels(labels)
+
+    @staticmethod
+    def _hard_bucket_evidence_labels(labels: list[str]) -> list[str]:
+        hard = {
+            "raw_transcript_exact",
+            "protected_phrase",
+            "same_day_metadata",
+            "exact_anchor",
+            "entity_match",
+            "keyword_match",
+        }
+        return [label for label in labels or [] if label in hard]
+
+    @staticmethod
+    def _weak_bucket_evidence_block_reason(labels: list[str]) -> str:
+        label_set = {str(label or "").strip() for label in labels or [] if str(label or "").strip()}
+        if not label_set:
+            return "no_hard_evidence"
+        if label_set == {"semantic_hit"}:
+            return "semantic_only"
+        if label_set.issubset({"semantic_hit", "graph_related"}):
+            return "weak_evidence_only"
+        return "no_hard_evidence"
 
     def _suppressed_bucket_moment_search_boost(self, query: str, item: dict) -> float:
         if not isinstance(item, dict):
@@ -14418,6 +14513,10 @@ class GatewayService:
             return False
         if self._is_self_anchor_recall_excluded_bucket(bucket):
             return False
+        evidence_labels = self._bucket_evidence_labels(query, item)
+        hard_evidence_labels = self._hard_bucket_evidence_labels(evidence_labels)
+        item["evidence_labels"] = evidence_labels
+        item["hard_evidence_labels"] = hard_evidence_labels
         query_plan = self._recall_query_plan(query)
         rejection = self._anchor_plan_direct_rejection(bucket, self._query_anchor_plan(query))
         if rejection:
@@ -14478,6 +14577,17 @@ class GatewayService:
             if not self._bucket_has_reliable_recall_signal(query, item):
                 item["admission_reason"] = "low_recall_evidence"
                 return False
+        if decision.admit_direct and not hard_evidence_labels:
+            reason = self._weak_bucket_evidence_block_reason(evidence_labels)
+            item["admission_reason"] = reason
+            item["blocked_reason"] = reason
+            item["recall_policy_debug"] = {
+                **(item.get("recall_policy_debug") if isinstance(item.get("recall_policy_debug"), dict) else {}),
+                "evidence_labels": evidence_labels,
+                "hard_evidence_labels": hard_evidence_labels,
+                "blocked_reason": reason,
+            }
+            return False
         return decision.admit_direct
 
     def _bucket_has_reliable_recall_signal(self, query: str, item: dict) -> bool:
@@ -15641,6 +15751,9 @@ class GatewayService:
             "status": str(status or ""),
             "stage": str(stage or ""),
             "primary_source": str(sources[0]["source"] if sources else ""),
+            "evidence_labels": self._debug_str_list(item.get("evidence_labels")),
+            "hard_evidence_labels": self._debug_str_list(item.get("hard_evidence_labels")),
+            "blocked_reason": str(item.get("blocked_reason") or ""),
             "sources": sources,
             "score": {
                 "final": self._safe_float(item.get("score"), 0.0),
@@ -15734,6 +15847,9 @@ class GatewayService:
             "bucket_id": str(bucket.get("id") or ""),
             "bucket_name": str(metadata.get("name") or bucket.get("id") or ""),
             "admission_reason": str(item.get("admission_reason") or "suppressed"),
+            "blocked_reason": str(item.get("blocked_reason") or ""),
+            "evidence_labels": list(item.get("evidence_labels") or []),
+            "hard_evidence_labels": list(item.get("hard_evidence_labels") or []),
             "score": self._safe_float(item.get("score"), 0.0),
             "semantic_score": self._safe_float(item.get("semantic_score"), 0.0),
             "keyword_score": self._safe_float(item.get("keyword_score"), 0.0),

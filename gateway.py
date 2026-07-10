@@ -21,6 +21,9 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
+from starlette.staticfiles import StaticFiles
+
+from eventide.src.eventide import EventideRuntime, advance_state, render_state_card
 
 from bucket_manager import BucketManager
 from dehydrator import Dehydrator
@@ -118,6 +121,11 @@ from utils import (
 from word_map import WordMapStore
 
 logger = logging.getLogger("ombre_brain.gateway")
+
+# Eventide globals
+_eventide_runtime: EventideRuntime | None = None
+user_states: dict[str, Any] = {}
+_last_proactive_true_ts: float = 0.0
 FAVORITE_MEMORY_MARKER = "[[ombre:favorite]]"
 RETRYABLE_UPSTREAM_STATUS_CODES = {401, 403, 429, 500, 502, 503, 504}
 DUPLICATE_CONVERSATION_TURN_WINDOW_SECONDS = 120
@@ -20049,6 +20057,25 @@ def create_gateway_app(
         return await request.app.state.gateway_service.handle_health(request)
 
     async def chat_completions(request: Request) -> Response:
+        # --- Eventide: 推进时间 & 状态卡 ---
+        global _eventide_runtime, user_states
+        user_id = request.headers.get("x-user-id", "default")
+        if user_id not in user_states:
+            user_states[user_id] = {}
+        state = user_states[user_id]
+        state = advance_state(state)
+        user_states[user_id] = state
+        card = render_state_card(state)
+        if card and _eventide_runtime is not None:
+            body = await request.json()
+            messages = body.get("messages", [])
+            messages.insert(0, {"role": "system", "content": card})
+            body["messages"] = messages
+            # reset cached json so handle_chat re-parses the modified body
+            if hasattr(request, "_json"):
+                delattr(request, "_json")
+            request._body = json.dumps(body).encode("utf-8")
+        # --- Eventide end ---
         return await request.app.state.gateway_service.handle_chat(request)
 
     async def anthropic_messages(request: Request) -> Response:
@@ -20072,6 +20099,16 @@ def create_gateway_app(
     async def upstream_usage_debug(request: Request) -> Response:
         return await request.app.state.gateway_service.handle_upstream_usage_debug(request)
 
+    async def proactive_poll(request: Request) -> JSONResponse:
+        global _last_proactive_true_ts
+        now = datetime.now(timezone.utc)
+        hour = now.hour
+        ts = now.timestamp()
+        if 8 <= hour < 24 and (ts - _last_proactive_true_ts) > 7200:
+            _last_proactive_true_ts = ts
+            return JSONResponse({"should_proactive": True})
+        return JSONResponse({"should_proactive": False})
+
     app = Starlette(
         debug=False,
         routes=[
@@ -20084,6 +20121,7 @@ def create_gateway_app(
             Route("/v1/models", models, methods=["GET"]),
             Route("/v1/chat/completions", chat_completions, methods=["POST"]),
             Route("/v1/messages", anthropic_messages, methods=["POST"]),
+            Route("/api/proactive/poll", proactive_poll, methods=["POST"]),
         ],
         lifespan=lifespan,
     )
@@ -20094,6 +20132,12 @@ def create_gateway_app(
         allow_headers=["*"],
         expose_headers=["*"],
     )
+
+    global _eventide_runtime
+    _eventide_runtime = EventideRuntime()
+
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
     return app
 
 
@@ -20103,7 +20147,7 @@ def main() -> None:
     gateway_cfg = config.get("gateway", {})
     app = create_gateway_app(config=config)
     host = gateway_cfg.get("host", "0.0.0.0")
-    port = int(gateway_cfg.get("port", 8010))
+    port = int(os.environ.get("PORT", gateway_cfg.get("port", 8010)))
     logger.info("Ombre Brain gateway starting | host=%s port=%s", host, port)
     uvicorn.run(app, host=host, port=port)
 

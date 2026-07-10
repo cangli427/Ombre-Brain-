@@ -203,31 +203,6 @@ DYNAMIC_ANCHOR_CATEGORY_OVERVIEW_MARKERS = (
     "读过什么",
     "做过什么",
 )
-DYNAMIC_ANCHOR_CATEGORY_TERMS = WORD_MAP_CATEGORY_SEED_TERMS | frozenset(
-    {
-        "story",
-        "stories",
-        "project",
-        "projects",
-        "故事",
-        "项目",
-    }
-)
-DYNAMIC_ANCHOR_STRICT_DIFFUSION_CATEGORY_TERMS = WORD_MAP_CATEGORY_SEED_TERMS | frozenset(
-    {
-        "story",
-        "stories",
-        "故事",
-    }
-)
-DYNAMIC_ANCHOR_CONTEXT_NAME_TERMS = frozenset(
-    {
-        "haven",
-        "rain",
-        "xiaoyu",
-        "小雨",
-    }
-)
 DYNAMIC_ANCHOR_CATEGORY_BLOCKED_KINDS = frozenset(
     {
         "preference",
@@ -11012,9 +10987,21 @@ class GatewayService:
         confidence = self._safe_float(row.get("confidence"), 0.0)
         if confidence < self.diffusion_inject_min_confidence:
             return False, "low_confidence"
+        why = str(row.get("why") or "")
+        path_len = int(row.get("path_len") or 0)
+        high_confidence_explicit_edge = (
+            why == "explicit_edge"
+            and path_len <= 1
+            and confidence >= max(self.diffusion_inject_min_confidence + 0.2, 0.80)
+        )
+        strong_explicit_edge = (
+            high_confidence_explicit_edge
+            and not self._axis_lite_has_technical_axis(query_plan)
+        )
         if (
             row.get("dynamic_anchor_required_terms")
             and not row.get("distinctive_anchor_match")
+            and not high_confidence_explicit_edge
         ):
             return False, "discriminative_anchor_missing"
         if (
@@ -11023,18 +11010,10 @@ class GatewayService:
             and not row.get("category_overview_item")
         ):
             return False, "category_overview_item_missing"
-        why = str(row.get("why") or "")
         has_caution_path = bool(row.get("path") is not None and path_has_caution(row.get("path")))
         has_source_record_topic_evidence = self._diffusion_path_source_record_evidence_extends_axis(
             row.get("path"),
             query_plan,
-        )
-        path_len = int(row.get("path_len") or 0)
-        strong_explicit_edge = (
-            why == "explicit_edge"
-            and path_len <= 1
-            and confidence >= max(self.diffusion_inject_min_confidence + 0.2, 0.80)
-            and not self._axis_lite_has_technical_axis(query_plan)
         )
         explicit_edge_axis_bypass = (
             strong_explicit_edge
@@ -14163,11 +14142,6 @@ class GatewayService:
                 return
             if key in self._identity_match_terms(compact=True):
                 return
-            if key in {
-                self._compact_lookup_key(term)
-                for term in DYNAMIC_ANCHOR_CONTEXT_NAME_TERMS
-            }:
-                return
             if re.fullmatch(r"[\u4e00-\u9fff]+", key) and len(key) < 2:
                 return
             if re.fullmatch(r"[a-z0-9_.:/-]+", key) and len(key) < 3 and not re.search(r"\d", key):
@@ -14199,18 +14173,23 @@ class GatewayService:
         key = self._compact_lookup_key(term)
         if not key:
             return False
-        if key in {
-            self._compact_lookup_key(value)
-            for value in DYNAMIC_ANCHOR_CATEGORY_TERMS | GENERIC_KEYWORD_MATCH_TERMS
-            if self._compact_lookup_key(value)
-        }:
-            return True
-        weak_terms = getattr(self.word_map_store, "weak_hint_terms", set()) if self.word_map_store else set()
         return key in {
             self._compact_lookup_key(value)
-            for value in weak_terms or set()
+            for value in self._dynamic_anchor_category_terms()
             if self._compact_lookup_key(value)
         }
+
+    def _dynamic_anchor_category_terms(self) -> set[str]:
+        terms = set(GENERIC_KEYWORD_MATCH_TERMS)
+        word_map_cfg = self.config.get("word_map", {})
+        if isinstance(word_map_cfg, dict):
+            configured = word_map_cfg.get("weak_hint_terms", []) or []
+            if isinstance(configured, str):
+                configured = [configured]
+            terms.update(str(value).strip() for value in configured if str(value).strip())
+        if self.word_map_store is not None:
+            terms.update(getattr(self.word_map_store, "weak_hint_terms", set()) or set())
+        return terms
 
     @staticmethod
     def _query_is_category_overview(query: str) -> bool:
@@ -14297,16 +14276,9 @@ class GatewayService:
                 -len(self._compact_lookup_key(term)),
             )
         )
-        strict_category_keys = {
-            self._compact_lookup_key(term)
-            for term in DYNAMIC_ANCHOR_STRICT_DIFFUSION_CATEGORY_TERMS
-        }
         strict_diffusion = bool(
             overview
-            or (
-                discriminative
-                and any(self._compact_lookup_key(term) in strict_category_keys for term in category)
-            )
+            or (discriminative and category)
         )
         return {
             "version": 1,
@@ -15471,7 +15443,7 @@ class GatewayService:
         )
         generic_keys.update(
             self._compact_lookup_key(value)
-            for value in DYNAMIC_ANCHOR_CATEGORY_TERMS
+            for value in self._dynamic_anchor_category_terms()
             if self._compact_lookup_key(value)
         )
         return key not in generic_keys

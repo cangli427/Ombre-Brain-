@@ -513,14 +513,9 @@ class GatewayService:
         self.dream_inject_enabled = bool(self.dream_cfg.get("inject_enabled", False))
         self.dream_retain_after_inject = bool(self.dream_cfg.get("retain_after_inject", False))
         self.gateway_token = os.environ.get("OMBRE_GATEWAY_TOKEN", "")
-        self.upstream_api_key = os.environ.get("OMBRE_GATEWAY_UPSTREAM_API_KEY", "")
-        self.upstream_base_url = self.gateway_cfg.get("upstream_base_url", "").rstrip("/")
-        self.upstream_default_model = self.gateway_cfg.get("upstream_default_model", "")
         self.default_session_id = str(self.gateway_cfg.get("default_session_id") or "main").strip()
-        self.upstream_models = self._normalize_model_list(
-            self.gateway_cfg.get("upstream_models", []),
-            self.upstream_default_model,
-        )
+        self.upstream_models: list[str] = []
+        self.upstream_default_model = ""
         self.upstreams = self._load_upstreams()
         self._refresh_upstream_model_summary()
 
@@ -838,8 +833,7 @@ class GatewayService:
                     bool(upstream.get("base_url") and upstream.get("api_keys"))
                     for upstream in self.upstreams
                 ),
-                "upstream_base_url": self.upstream_base_url
-                or (self.upstreams[0]["base_url"] if len(self.upstreams) == 1 else ""),
+                "upstream_base_url": (self.upstreams[0]["base_url"] if self.upstreams else ""),
                 "upstream_default_model": self.upstream_default_model,
                 "upstream_models": self.upstream_models,
                 "cooldown_hours": self.cooldown_hours,
@@ -19884,71 +19878,30 @@ class GatewayService:
         )
 
     def _load_upstreams(self) -> list[dict[str, Any]]:
-        raw_upstreams = self.gateway_cfg.get("upstreams", [])
-        if isinstance(raw_upstreams, list) and raw_upstreams:
-            upstreams = []
-            for index, raw in enumerate(raw_upstreams, start=1):
-                if not isinstance(raw, dict):
-                    continue
-                name = str(raw.get("name") or f"upstream-{index}").strip() or f"upstream-{index}"
-                base_url = str(raw.get("base_url") or "").rstrip("/")
-                default_model = str(raw.get("default_model") or "").strip()
-                api_keys = self._api_key_entries_from_config(raw)
-                models, model_map = self._model_routes_from_config(
-                    raw.get("models", []),
-                    default_model,
-                )
-                protocol = self._normalize_upstream_protocol(
-                    raw.get("protocol") or raw.get("api_format") or raw.get("type")
-                )
-                prompt_cache = str(raw.get("prompt_cache") or "").strip().lower()
-                prompt_cache_retention = str(raw.get("prompt_cache_retention") or "").strip()
-                anthropic_version = str(raw.get("anthropic_version") or "2023-06-01").strip()
-                anthropic_beta = str(raw.get("anthropic_beta") or "").strip()
-                upstreams.append(
-                    {
-                        "name": name,
-                        "base_url": base_url,
-                        "protocol": protocol,
-                        "api_key": api_keys[0]["value"] if api_keys else "",
-                        "api_keys": api_keys,
-                        "default_model": default_model,
-                        "models": models,
-                        "model_map": model_map,
-                        "prompt_cache": prompt_cache,
-                        "prompt_cache_retention": prompt_cache_retention,
-                        "anthropic_version": anthropic_version,
-                        "anthropic_beta": anthropic_beta,
-                    }
-                )
-            if upstreams:
-                return upstreams
+        base_url = os.environ.get("OMBRE_GATEWAY_PROVIDER_A_BASE_URL", "").strip().rstrip("/")
+        api_key = os.environ.get("OMBRE_GATEWAY_PROVIDER_A_API_KEY", "").strip()
+        model = os.environ.get("OMBRE_GATEWAY_PROVIDER_A_MODEL", "").strip()
 
-        models, model_map = self._model_routes_from_config(
-            self.gateway_cfg.get("upstream_models", []),
-            self.upstream_default_model,
-        )
+        if not base_url or not api_key or not model:
+            raise RuntimeError(
+                "环境变量不完整：请设置 OMBRE_GATEWAY_PROVIDER_A_BASE_URL、"
+                "OMBRE_GATEWAY_PROVIDER_A_API_KEY、OMBRE_GATEWAY_PROVIDER_A_MODEL"
+            )
+
         return [
             {
-                "name": "default",
-                "base_url": self.upstream_base_url,
-                "protocol": self._normalize_upstream_protocol(self.gateway_cfg.get("upstream_protocol")),
-                "api_key": self.upstream_api_key,
-                "api_keys": self._api_key_entries_from_config(
-                    self.gateway_cfg,
-                    fallback_api_key=self.upstream_api_key,
-                ),
-                "default_model": self.upstream_default_model,
-                "models": models,
-                "model_map": model_map,
-                "prompt_cache": str(self.gateway_cfg.get("prompt_cache") or "").strip().lower(),
-                "prompt_cache_retention": str(
-                    self.gateway_cfg.get("prompt_cache_retention") or ""
-                ).strip(),
-                "anthropic_version": str(
-                    self.gateway_cfg.get("anthropic_version") or "2023-06-01"
-                ).strip(),
-                "anthropic_beta": str(self.gateway_cfg.get("anthropic_beta") or "").strip(),
+                "name": "provider-a",
+                "base_url": base_url,
+                "protocol": "openai",
+                "api_key": api_key,
+                "api_keys": [{"value": api_key, "label": "env:OMBRE_GATEWAY_PROVIDER_A_API_KEY"}],
+                "default_model": model,
+                "models": [model],
+                "model_map": {model: model},
+                "prompt_cache": "",
+                "prompt_cache_retention": "",
+                "anthropic_version": "2023-06-01",
+                "anthropic_beta": "",
             }
         ]
 

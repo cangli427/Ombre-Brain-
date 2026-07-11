@@ -20215,9 +20215,9 @@ def _generate_companion_content(state) -> str:
         f"敏感度 {sensitivity}，蓄积感 {reserve}，占有欲 {possessiveness}，疲惫感 {fatigue}\n"
         f"当前周期：{cycle_key}\n"
         f"当前事件：{event_key}\n\n"
-        "请用一句话（10-20字）描述"她"此刻正在做什么、状态如何。"
+        "请用一句话（10-20字）描述\"她\"此刻正在做什么、状态如何。"
         "不要出现具体数字，要自然、有生活感。"
-        "例如："窝在沙发上发呆，手指无意识地敲着膝盖。""
+        "例如：\"窝在沙发上发呆，手指无意识地敲着膝盖。\""
     )
 
     if not _LIGHT_MODEL_BASE_URL or not _LIGHT_MODEL_API_KEY:

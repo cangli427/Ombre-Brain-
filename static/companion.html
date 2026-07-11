@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>此刻 · 伴侣在做什么</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:#f5f0eb;color:#4e372d;min-height:100vh;-webkit-font-smoothing:antialiased}
+    ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#d4c4b2;border-radius:2px}
+    .container{max-width:640px;margin:0 auto;padding:24px 20px;min-height:100vh;display:flex;flex-direction:column}
+    .header{text-align:center;padding:40px 0 8px;position:relative}
+    .header h1{font-size:22px;font-weight:700;color:#4e372d}
+    .header .sub{font-size:13px;color:#bba38a;margin-top:4px}
+    .refresh-btn{position:absolute;right:0;top:40px;width:36px;height:36px;border:1px solid #e8dfd5;border-radius:50%;background:rgba(255,255,255,0.7);color:#bba38a;font-size:18px;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center}
+    .refresh-btn:hover{background:#fff;border-color:#d4c4b2;color:#84614a}
+    .refresh-btn:active{transform:scale(0.9)}
+    .refresh-btn.spinning{animation:spin .5s ease-in-out}
+    @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+    .status-card{background:rgba(255,255,255,0.85);backdrop-filter:blur(8px);border:1px solid #e8dfd5;border-radius:20px;padding:40px 24px 32px;text-align:center;box-shadow:0 2px 12px rgba(0,0,0,0.04);margin-top:4px}
+    .status-emoji{font-size:60px;display:block;margin-bottom:16px;animation:float 3s ease-in-out infinite}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+    .status-room{font-size:22px;font-weight:700;color:#4e372d;margin-bottom:8px}
+    .status-activity{font-size:16px;color:#84614a;line-height:1.7;margin-bottom:20px}
+    .status-time{font-size:12px;color:#bba38a}
+    .status-empty{padding:60px 24px;text-align:center}
+    .status-empty .big{font-size:48px;display:block;margin-bottom:16px}
+    .status-empty p{font-size:15px;color:#bba38a}
+    .house-section{margin-top:20px;background:rgba(255,255,255,0.6);border-radius:16px;padding:20px;border:1px solid #e8dfd5}
+    .house-section h2{font-size:13px;font-weight:600;color:#bba38a;margin-bottom:12px;text-align:center;letter-spacing:.05em}
+    .room-grid{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+    .room-item{display:flex;align-items:center;gap:4px;padding:6px 12px;border-radius:10px;font-size:13px;background:#f5f0eb;color:#84614a;border:1px solid transparent;transition:all .2s}
+    .room-item.active{background:#fffbeb;border-color:#f59e0b;color:#92400e;font-weight:500}
+    .footer{text-align:center;padding:24px 0 16px;font-size:11px;color:#d4c4b2;margin-top:auto}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    .fade-in{animation:fadeIn .4s ease-out}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🏠 此刻</h1>
+      <p class="sub" id="dayDisplay">加载中...</p>
+      <button class="refresh-btn" id="refreshBtn" onclick="refresh()">↻</button>
+    </div>
+    <div id="statusCard" class="status-card fade-in">
+      <div class="status-empty"><span class="big">🔍</span><p>读取中...</p></div>
+    </div>
+    <div class="house-section">
+      <h2>🏘️ 空间</h2>
+      <div class="room-grid" id="roomGrid"></div>
+    </div>
+    <div class="footer">伴侣正在小窝里做自己的事</div>
+  </div>
+  <script>
+    var SU='https://piockdnpnwpztpkkqxap.supabase.co';
+    var SK='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpb2NrZG5wbndwenRwa2txeGFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3MTM1MzgsImV4cCI6MjA5NjI4OTUzOH0.RbgN7VzdgRtvxwRQ-vGoyK8jVaDzQ2lcM5vID_-YoeQ';
+    var RI={living:'🛋️',bedroom:'🛏️',kitchen:'🍳',studio:'🎨',music:'🎵',garden:'🌻',observatory:'🔭',basement:'🗝️'};
+    var RN={living:'客厅',bedroom:'卧室',kitchen:'厨房',studio:'画室',music:'音乐室',garden:'花园',observatory:'观星台',basement:'地下室'};
+    var AR=['living','bedroom','kitchen','studio','music','garden','observatory','basement'];
+    
+    function refresh(){
+      var btn=document.getElementById('refreshBtn');btn.className='refresh-btn spinning';
+      document.getElementById('statusCard').innerHTML='<div class="status-empty fade-in"><span class="big">🔍</span><p>读取中...</p></div>';
+      var x=new XMLHttpRequest();
+      x.open('GET',SU+'/rest/v1/memory_house?action_type=eq.companion_state&order=id.desc&limit=1',true);
+      x.setRequestHeader('apikey',SK);x.setRequestHeader('Authorization','Bearer '+SK);x.setRequestHeader('Accept','application/json');
+      x.onload=function(){btn.className='refresh-btn';if(x.status>=200&&x.status<300){try{var d=JSON.parse(x.responseText);if(d&&d.length>0){show(d[0])}else{empty()}}catch(e){empty()}}else{empty()}};
+      x.onerror=function(){btn.className='refresh-btn';empty()};
+      x.send();
+    }
+    
+    function show(row){
+      var rid=row.room||'living',icon=RI[rid]||'🏠',name=RN[rid]||rid,content=row.content||'安安静静地待着',time=row.created_at||'';time=fmt(time);
+      document.getElementById('statusCard').innerHTML='<div class="fade-in"><span class="status-emoji">'+icon+'</span><div class="status-room">'+name+'</div><div class="status-activity">'+content+'</div><div class="status-time">更新于 '+time+'</div></div>';
+      var g='';for(var i=0;i<AR.length;i++){var id=AR[i];g+='<span class="room-item'+(id===rid?' active':'')+'">'+RI[id]+' '+RN[id]+'</span>'}document.getElementById('roomGrid').innerHTML=g;
+    }
+    
+    function empty(){
+      document.getElementById('statusCard').innerHTML='<div class="status-empty fade-in"><span class="big">🚪</span><p>伴侣还没回家</p></div>';
+      var g='';for(var i=0;i<AR.length;i++){g+='<span class="room-item">'+RI[AR[i]]+' '+RN[AR[i]]+'</span>'}document.getElementById('roomGrid').innerHTML=g;
+    }
+    
+    function fmt(iso){if(!iso)return'未知';try{var d=new Date(iso.replace(' ','T'));if(isNaN(d.getTime()))return iso;var h=d.getHours(),m=String(d.getMinutes()).padStart(2,'0'),p=h<12?'上午':(h<18?'下午':'晚上');return p+' '+(h%12||12)+':'+m}catch(e){return iso}}
+    
+    function tick(){var d=new Date();document.getElementById('dayDisplay').textContent=d.getFullYear()+'年'+(d.getMonth()+1)+'月'+d.getDate()+'日 · '+d.getHours()+':'+String(d.getMinutes()).padStart(2,'0')}
+    
+    refresh();tick();setInterval(tick,30000);
+  </script>
+</body>
+</html>

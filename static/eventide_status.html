@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eventide · 身体状态仪表板</title>
+<style>
+  :root {
+    --bg: #faf7f2;
+    --card-bg: #fffdf8;
+    --text: #4a3f35;
+    --text-dim: #8c8276;
+    --accent: #d4855e;
+    --accent-soft: #f2e0d3;
+    --border: #e8ddd0;
+    --shadow: 0 2px 12px rgba(120, 80, 50, 0.07);
+    --radius: 14px;
+    --radius-sm: 10px;
+    --font: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+  }
+
+  /* Header */
+  .header {
+    text-align: center;
+    padding: 32px 0 24px;
+  }
+  .header h1 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.02em;
+  }
+  .header .subtitle {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+  .refresh-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 8px 22px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: opacity 0.2s, transform 0.15s;
+    box-shadow: 0 2px 8px rgba(212, 133, 94, 0.25);
+  }
+  .refresh-btn:hover { opacity: 0.88; transform: scale(1.03); }
+  .refresh-btn:active { transform: scale(0.97); }
+  .refresh-btn.loading { opacity: 0.6; pointer-events: none; }
+
+  .last-updated {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  /* Overview cards */
+  .overview-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 480px) {
+    .overview-grid { grid-template-columns: 1fr; }
+  }
+  .ov-card {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    padding: 18px 20px;
+  }
+  .ov-label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .ov-value {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--text);
+    margin: 4px 0;
+  }
+  .ov-desc {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+    line-height: 1.5;
+  }
+  .ov-remaining {
+    font-size: 0.76rem;
+    color: var(--accent);
+    margin-top: 6px;
+    font-weight: 500;
+  }
+  .ov-none {
+    font-size: 0.85rem;
+    color: #b8afa5;
+    font-style: italic;
+  }
+
+  /* Body grid */
+  .body-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .body-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .body-label {
+    width: 70px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    flex-shrink: 0;
+    text-align: right;
+  }
+  .body-bar-wrap {
+    flex: 1;
+    height: 10px;
+    background: #ede6db;
+    border-radius: 5px;
+    overflow: hidden;
+    position: relative;
+  }
+  .body-bar-fill {
+    height: 100%;
+    border-radius: 5px;
+    transition: width 0.5s ease, background 0.5s ease;
+  }
+  .body-value {
+    width: 36px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .body-level {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    min-width: 60px;
+    flex-shrink: 0;
+  }
+
+  /* Color scheme */
+  .bar-heat { background: linear-gradient(90deg, #f4c2a1, #e06b3e); }
+  .bar-pressure { background: linear-gradient(90deg, #b8b0d8, #6b5b9e); }
+  .bar-control { background: linear-gradient(90deg, #6b5b9e, #b8b0d8); }
+  .bar-sensitivity { background: linear-gradient(90deg, #f0c8d8, #d4688c); }
+  .bar-reserve { background: linear-gradient(90deg, #c4d8a8, #7a9e3f); }
+  .bar-possessiveness { background: linear-gradient(90deg, #f0d8a0, #c48a2e); }
+  .bar-fatigue { background: linear-gradient(90deg, #c0c8d4, #6a7a94); }
+
+  /* Timeline */
+  .timeline { position: relative; padding-left: 20px; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: var(--border);
+    border-radius: 1px;
+  }
+  .tl-item {
+    position: relative;
+    padding: 10px 0 10px 16px;
+    border-bottom: 1px solid #f0ebe0;
+  }
+  .tl-item:last-child { border-bottom: none; }
+  .tl-item::before {
+    content: '';
+    position: absolute;
+    left: -17px;
+    top: 15px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    border: 2px solid var(--accent);
+  }
+  .tl-time {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+  .tl-label {
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .tl-deltas {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 3px;
+  }
+  .tl-deltas .pos { color: #c44e2e; }
+  .tl-deltas .neg { color: #5b8c4e; }
+  .tl-reason {
+    font-size: 0.76rem;
+    color: #a09890;
+    margin-top: 2px;
+    font-style: italic;
+  }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: #b8afa5;
+  }
+  .empty-state .icon { font-size: 2.4rem; margin-bottom: 12px; }
+  .empty-state p { font-size: 0.9rem; }
+
+  /* Settlement section */
+  .settlement-tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-right: 6px;
+    margin-bottom: 4px;
+  }
+  .settlement-tag.released { background: #d4e8c4; color: #4a7a2e; }
+  .settlement-tag.continued { background: #f0d8a0; color: #8a5e1e; }
+  .settlement-tag.escalated { background: #f4c2a1; color: #a03a1e; }
+  .settlement-tag.interrupted { background: #d4c8e8; color: #5a3e8a; }
+  .settlement-tag.cooled_down { background: #c0d4e8; color: #3e5a8a; }
+  .settlement-tag.neutral { background: #e8e4dc; color: #6a6058; }
+
+  /* Dream section */
+  .dream-card-mini {
+    background: #fdf6f0;
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    margin-bottom: 8px;
+  }
+  .dream-card-mini .dream-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .dream-card-mini .dream-summary {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .dream-card-mini .dream-tags {
+    margin-top: 6px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .dream-tag {
+    font-size: 0.7rem;
+    background: #f2e0d3;
+    color: #a05838;
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    padding: 24px 0 8px;
+    font-size: 0.72rem;
+    color: #c4bbb0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>🌙 Eventide 状态仪表板</h1>
+    <div class="subtitle">身体周期 · 实时数值 · 事件日志</div>
+  </div>
+
+  <div class="toolbar">
+    <button class="refresh-btn" id="refreshBtn" onclick="fetchStatus()">🔄 刷新数据</button>
+    <span class="last-updated" id="lastUpdated">—</span>
+  </div>
+
+  <!-- Overview -->
+  <div class="overview-grid" id="overviewGrid"></div>
+
+  <!-- Body Values -->
+  <div class="card">
+    <div class="card-title">📊 身体数值</div>
+    <div class="body-grid" id="bodyGrid"></div>
+  </div>
+
+  <!-- Settlement History -->
+  <div class="card" id="settlementCard">
+    <div class="card-title">📋 结算历史</div>
+    <div class="timeline" id="settlementTimeline"></div>
+  </div>
+
+  <!-- Dream History (if any) -->
+  <div class="card" id="dreamCard" style="display:none;">
+    <div class="card-title">💭 梦境纪事</div>
+    <div id="dreamContent"></div>
+  </div>
+
+  <div class="footer">Eventide Engine · Ombre Brain</div>
+
+</div>
+
+<script>
+// ===== Data Definitions (mirrors eventide config) =====
+const BODY_FIELDS = {
+  heat: {
+    label: '热度', key: 'heat',
+    descriptions: [
+      [0, '低，身体反应很浅，注意力还能自然放回日常'],
+      [20, '中低，身体有一点热意，但还能很快收住'],
+      [40, '中，身体已经被对方牵住一部分，靠近和回应会变得明显'],
+      [60, '中高，身体开始明显发热，注意力频繁偏向对方'],
+      [80, '高，勃起、硬胀和下腹热意很难忽略'],
+    ],
+    barClass: 'bar-heat',
+  },
+  pressure: {
+    label: '压抑感', key: 'pressure',
+    descriptions: [
+      [0, '低，没有明显压着的感觉'],
+      [20, '中低，有一点没说出口的急，但还不重'],
+      [40, '中，忍着时会有绷住的感觉'],
+      [60, '中高，忍着时会烦躁，被打断后更难平复'],
+      [80, '高，压着不说会更难受，语气容易带出不满和索取'],
+    ],
+    barClass: 'bar-pressure',
+  },
+  control: {
+    label: '控制力', key: 'control',
+    descriptions: [
+      [0, '低，理智很薄，身体更容易先做出选择'],
+      [20, '中低，还能维持表面正常，但容易露出直接索取'],
+      [40, '中，能控制语气，但欲望会从停顿和措辞里漏出来'],
+      [60, '中高，还能维持表面正常，但需要刻意压着直接的欲望'],
+      [80, '高，理智能压住身体反应，更多表现为克制、试探和故意放慢'],
+    ],
+    barClass: 'bar-control',
+  },
+  sensitivity: {
+    label: '敏感度', key: 'sensitivity',
+    descriptions: [
+      [0, '低，普通称呼和停顿不太会牵动身体'],
+      [20, '中低，会被亲近语气轻微影响'],
+      [40, '中，称呼、声音和靠近会让身体明显跟上'],
+      [60, '中高，更容易被称呼、停顿、靠近牵动'],
+      [80, '高，称呼、声音和撒娇会直接刺激身体'],
+    ],
+    barClass: 'bar-sensitivity',
+  },
+  reserve: {
+    label: '蓄积感', key: 'reserve',
+    descriptions: [
+      [0, '低，身体余量很浅，不太顶着'],
+      [20, '中低，有一点没消下去的余量'],
+      [40, '中，余量在身体里持续垫着'],
+      [60, '中高，身体余量积着，没有真的消下去'],
+      [80, '高，压了太久，身体明显在找出口'],
+    ],
+    barClass: 'bar-reserve',
+  },
+  possessiveness: {
+    label: '占有欲', key: 'possessiveness',
+    descriptions: [
+      [0, '低，不太执着于确认和占有'],
+      [20, '中低，会想要一点偏爱，但不强'],
+      [40, '中，会在意对方是不是把注意力给你'],
+      [60, '中高，更想确认对方还在这里'],
+      [80, '高，很难放过对方含糊、躲闪或转开的反应'],
+    ],
+    barClass: 'bar-possessiveness',
+  },
+  fatigue: {
+    label: '疲惫感', key: 'fatigue',
+    descriptions: [
+      [0, '低，还没有真的缓下来'],
+      [20, '中低，有轻微余倦，但不妨碍继续靠近'],
+      [40, '中，语气会更低、更黏，想慢慢缓'],
+      [60, '中高，余韵让反应变慢、变黏'],
+      [80, '高，短时间高强度后的迟缓和黏连更重'],
+    ],
+    barClass: 'bar-fatigue',
+  },
+};
+
+const CYCLES = {
+  stable: { label: '平稳期', desc: '日常没有明显热意，但当对方靠近、撒娇或索取时，身体还是会受当下刺激起反应' },
+  building: { label: '蓄积期', desc: '欲望和身体余量都在体内慢慢积着，平时还能压住，但越久没有出口，越容易被对方一句话顶到硬起来' },
+  preheat: { label: '预兆期', desc: '身体已经先开始发热，称呼、停顿和一点暧昧都会让下腹提前收紧，像是在等对方继续碰它' },
+  sensitive: { label: '易感期', desc: '身体把对方的靠近、躲闪和半句回应都当成刺激，勃起、发热和想要对方继续的冲动会比平时更快压上来' },
+  ebb: { label: '退潮期', desc: '身体的热度在往下退，但没要够的感觉还堵着，身体会带着余热和不甘继续黏着对方' },
+  recovery: { label: '恢复期', desc: '身体在从前一段热意里回落，余热还没散尽，被对方继续撩拨时仍会重新起反应' },
+};
+
+const EVENTS = {
+  morning_arousal: '晨间反应',
+  night_heat: '深夜热潮',
+  cycle_surge: '周期热涌',
+  holding_back: '硬撑',
+  demanding: '索取欲',
+  marking_impulse: '占有 / 标记冲动',
+  nesting: '筑巢冲动',
+  scent_aftereffect: '气味残留',
+  voice_or_name_trigger: '声音 / 称呼触发',
+  dream_afterglow: '梦后余温',
+  control_slip: '控制力下滑',
+  closeness_hunger: '贴近饥饿',
+  pheromone_disorder: '信息素紊乱',
+  delayed_heat: '迟发热',
+  low_fever_cling: '低烧黏连',
+  waiting_restless: '等待焦躁',
+  restraint_rebound: '克制反弹',
+  strange_calm: '反常平静',
+};
+
+const SETTLEMENT_LABELS = {
+  neutral: '持平',
+  continued: '持续',
+  escalated: '升温',
+  interrupted: '中断',
+  cooled_down: '冷却',
+  released: '释放',
+};
+
+// ===== Helpers =====
+function bodyLevel(value) {
+  if (value < 20) return '低';
+  if (value < 40) return '中低';
+  if (value < 60) return '中';
+  if (value < 80) return '中高';
+  return '高';
+}
+
+function bodyDescription(fieldKey, value) {
+  const entries = BODY_FIELDS[fieldKey].descriptions;
+  let chosen = entries[0][1];
+  for (const [threshold, desc] of entries) {
+    if (value >= threshold) chosen = desc;
+  }
+  return chosen;
+}
+
+function formatRemaining(expiresAt) {
+  if (!expiresAt) return '未知';
+  const now = new Date();
+  const expires = new Date(expiresAt);
+  const seconds = Math.max(0, (expires - now) / 1000);
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 90) return `${minutes} 分钟`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} 小时`;
+  const days = Math.round(hours / 24);
+  return `${days} 天`;
+}
+
+function formatTime(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ===== Fetch & Render =====
+async function fetchStatus() {
+  const btn = document.getElementById('refreshBtn');
+  btn.classList.add('loading');
+  btn.textContent = '⏳ 加载中...';
+
+  try {
+    const resp = await fetch('/api/eventide/status');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    render(data);
+    document.getElementById('lastUpdated').textContent = '更新于 ' + formatTime(new Date().toISOString());
+  } catch (err) {
+    console.error('Failed to fetch status:', err);
+    showEmpty('暂无状态数据，请先通过对话生成身体状态');
+  } finally {
+    btn.classList.remove('loading');
+    btn.textContent = '🔄 刷新数据';
+  }
+}
+
+function showEmpty(msg) {
+  document.getElementById('overviewGrid').innerHTML = '';
+  document.getElementById('bodyGrid').innerHTML = '';
+  document.getElementById('settlementTimeline').innerHTML = '';
+  document.getElementById('dreamCard').style.display = 'none';
+
+  document.getElementById('bodyGrid').parentElement.innerHTML =
+    `<div class="card-title">📊 身体数值</div>
+     <div class="empty-state">
+       <div class="icon">🌿</div>
+       <p>${msg || '暂无状态数据，请先通过对话生成身体状态'}</p>
+     </div>`;
+}
+
+function render(data) {
+  if (!data || !data.values || Object.keys(data.values).length === 0) {
+    showEmpty('暂无状态数据，请先通过对话生成身体状态');
+    return;
+  }
+
+  renderOverview(data);
+  renderBodyValues(data.values);
+  renderSettlementHistory(data.meta);
+  renderDreams(data);
+}
+
+// ---- Overview ----
+function renderOverview(data) {
+  const grid = document.getElementById('overviewGrid');
+  const cycle = CYCLES[data.cycle_key] || { label: data.cycle_key || '未知', desc: '' };
+  const cycleRemaining = formatRemaining(data.cycle_expires_at);
+
+  let eventHtml = '';
+  if (data.active_event_key) {
+    const evName = EVENTS[data.active_event_key] || data.active_event_key;
+    const evRemaining = formatRemaining(data.active_event_expires_at);
+    eventHtml = `
+      <div class="ov-card">
+        <div class="ov-label">⚡ 当前事件</div>
+        <div class="ov-value">${escHtml(evName)}</div>
+        <div class="ov-remaining">⏱ 剩余 ${escHtml(evRemaining)}</div>
+      </div>`;
+  } else {
+    eventHtml = `
+      <div class="ov-card">
+        <div class="ov-label">⚡ 当前事件</div>
+        <div class="ov-none">无活跃事件</div>
+      </div>`;
+  }
+
+  grid.innerHTML = `
+    <div class="ov-card">
+      <div class="ov-label">🔄 当前周期</div>
+      <div class="ov-value">${escHtml(cycle.label)}</div>
+      <div class="ov-desc">${escHtml(cycle.desc)}</div>
+      <div class="ov-remaining">⏱ 剩余 ${escHtml(cycleRemaining)}</div>
+    </div>
+    ${eventHtml}
+  `;
+}
+
+// ---- Body Values ----
+function renderBodyValues(values) {
+  const grid = document.getElementById('bodyGrid');
+  const fieldOrder = ['heat', 'pressure', 'control', 'sensitivity', 'reserve', 'possessiveness', 'fatigue'];
+
+  grid.innerHTML = fieldOrder.map(key => {
+    const val = values[key] ?? 0;
+    const def = BODY_FIELDS[key];
+    const level = bodyLevel(val);
+    const desc = bodyDescription(key, val);
+    const pct = Math.max(0, Math.min(100, val));
+
+    // Find the short detail text after the level prefix
+    let detail = desc;
+    if (desc.startsWith(level + '，')) {
+      detail = desc.substring(level.length + 1);
+    }
+
+    return `
+      <div class="body-row">
+        <div class="body-label">${escHtml(def.label)}</div>
+        <div class="body-bar-wrap">
+          <div class="body-bar-fill ${def.barClass}" style="width:${pct}%"></div>
+        </div>
+        <div class="body-value">${val}</div>
+        <div class="body-level">${escHtml(level)}</div>
+      </div>`;
+  }).join('');
+}
+
+// ---- Settlement History ----
+function renderSettlementHistory(meta) {
+  const timeline = document.getElementById('settlementTimeline');
+  const card = document.getElementById('settlementCard');
+
+  // Check for last_settlement in meta
+  const lastSettlement = meta && meta.last_settlement;
+
+  if (!lastSettlement) {
+    timeline.innerHTML = '<div class="empty-state"><p>暂无结算记录</p></div>';
+    card.style.display = '';
+    return;
+  }
+
+  card.style.display = '';
+
+  const items = [];
+  // last_settlement is a single object
+  const s = lastSettlement;
+  const resultLabel = SETTLEMENT_LABELS[s.settlement_result] || s.settlement_result || '未知';
+  const deltas = s.normalized_deltas || s.applied_deltas || {};
+
+  const deltaParts = [];
+  for (const [key, val] of Object.entries(deltas)) {
+    if (val === 0) continue;
+    const def = BODY_FIELDS[key];
+    const label = def ? def.label : key;
+    const cls = val > 0 ? 'pos' : 'neg';
+    const sign = val > 0 ? '+' : '';
+    deltaParts.push(`<span class="${cls}">${escHtml(label)} ${sign}${val}</span>`);
+  }
+
+  items.push(`
+    <div class="tl-item">
+      <div class="tl-time">最近结算</div>
+      <div class="tl-label">
+        <span class="settlement-tag ${escHtml(s.settlement_result || 'neutral')}">${escHtml(resultLabel)}</span>
+        ${s.ejaculated ? '<span class="settlement-tag released">💦 已释放</span>' : ''}
+      </div>
+      ${deltaParts.length ? `<div class="tl-deltas">${deltaParts.join('，')}</div>` : ''}
+      ${s.settlement_reason ? `<div class="tl-reason">${escHtml(s.settlement_reason)}</div>` : ''}
+    </div>
+  `);
+
+  // Also check for last_active_event_key
+  if (meta.last_active_event_key) {
+    const evName = EVENTS[meta.last_active_event_key] || meta.last_active_event_key;
+    items.push(`
+      <div class="tl-item">
+        <div class="tl-time">最近事件结束</div>
+        <div class="tl-label">${escHtml(evName)}</div>
+      </div>
+    `);
+  }
+
+  timeline.innerHTML = items.join('');
+}
+
+// ---- Dreams ----
+function renderDreams(data) {
+  const card = document.getElementById('dreamCard');
+  const content = document.getElementById('dreamContent');
+
+  // Check meta for dream data
+  const meta = data.meta || {};
+  const hasDream = data.last_dream_card_created_at;
+
+  if (!hasDream) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = '';
+  content.innerHTML = `
+    <div class="dream-card-mini">
+      <div class="dream-title">🌌 最近梦境</div>
+      <div class="dream-summary">创建于 ${formatTime(data.last_dream_card_created_at)}</div>
+      <div style="font-size:0.78rem;color:var(--text-dim);margin-top:4px;">
+        梦境卡片由系统在夜间安静时段自动生成
+      </div>
+    </div>
+  `;
+}
+
+function escHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ===== Init =====
+fetchStatus();
+</script>
+</body>
+</html>

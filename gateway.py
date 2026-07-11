@@ -1,10 +1,12 @@
 import logging
 import hashlib
 import os
+import random
 import re
 import secrets
 import json
 import codecs
+import threading
 import time
 import asyncio
 from contextlib import asynccontextmanager
@@ -23,7 +25,8 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
 
-from eventide.src.eventide import EventideRuntime, advance_state, render_state_card
+from eventide import EventideRuntime, advance_state, render_state_card, body_state_to_dict, create_initial_state
+from dashboard_routes import DASHBOARD_ROUTES
 
 from bucket_manager import BucketManager
 from dehydrator import Dehydrator
@@ -20060,18 +20063,18 @@ def create_gateway_app(
         # --- Eventide: 推进时间 & 状态卡 ---
         global _eventide_runtime, user_states
         user_id = request.headers.get("x-user-id", "default")
+        now = datetime.now(timezone.utc)
         if user_id not in user_states:
-            user_states[user_id] = {}
+            user_states[user_id] = create_initial_state(now)
         state = user_states[user_id]
-        state = advance_state(state)
+        _eventide_runtime.tick(state, now)
         user_states[user_id] = state
-        card = render_state_card(state)
-        if card and _eventide_runtime is not None:
+        card = _eventide_runtime.render_card(state, now)
+        if card:
             body = await request.json()
             messages = body.get("messages", [])
             messages.insert(0, {"role": "system", "content": card})
             body["messages"] = messages
-            # reset cached json so handle_chat re-parses the modified body
             if hasattr(request, "_json"):
                 delattr(request, "_json")
             request._body = json.dumps(body).encode("utf-8")
@@ -20083,9 +20086,6 @@ def create_gateway_app(
 
     async def models(request: Request) -> Response:
         return await request.app.state.gateway_service.handle_models(request)
-
-    async def config_route(request: Request) -> Response:
-        return await request.app.state.gateway_service.handle_config(request)
 
     async def injection_debug(request: Request) -> Response:
         return await request.app.state.gateway_service.handle_injection_debug(request)
@@ -20109,11 +20109,19 @@ def create_gateway_app(
             return JSONResponse({"should_proactive": True})
         return JSONResponse({"should_proactive": False})
 
+    async def eventide_status(request: Request) -> JSONResponse:
+        global user_states
+        user_id = request.query_params.get("user_id", "default")
+        if user_id not in user_states or not user_states[user_id]:
+            now = datetime.now(timezone.utc)
+            user_states[user_id] = create_initial_state(now)
+        state = user_states[user_id]
+        return JSONResponse(body_state_to_dict(state))
+
     app = Starlette(
         debug=False,
         routes=[
             Route("/health", health, methods=["GET"]),
-            Route("/api/config", config_route, methods=["GET", "POST"]),
             Route("/api/debug/injections", injection_debug, methods=["GET"]),
             Route("/api/hook/recall", hook_recall, methods=["POST"]),
             Route("/api/debug/recall-eval", recall_eval_debug, methods=["GET"]),
@@ -20122,6 +20130,8 @@ def create_gateway_app(
             Route("/v1/chat/completions", chat_completions, methods=["POST"]),
             Route("/v1/messages", anthropic_messages, methods=["POST"]),
             Route("/api/proactive/poll", proactive_poll, methods=["POST"]),
+            Route("/api/eventide/status", eventide_status, methods=["GET"]),
+            *DASHBOARD_ROUTES,
         ],
         lifespan=lifespan,
     )
@@ -20149,7 +20159,214 @@ def main() -> None:
     host = gateway_cfg.get("host", "0.0.0.0")
     port = int(os.environ.get("PORT", gateway_cfg.get("port", 8010)))
     logger.info("Ombre Brain gateway starting | host=%s port=%s", host, port)
+    start_heartbeat()
     uvicorn.run(app, host=host, port=port)
+
+
+# ---------------------------------------------------------------------------
+# Companion Heartbeat — 小屋状态心跳
+# ---------------------------------------------------------------------------
+
+_SUPABASE_URL = os.environ.get(
+    "SUPABASE_URL",
+    "https://piockdnpnwpztpkkqxap.supabase.co",
+)
+_SUPABASE_ANON_KEY = os.environ.get(
+    "SUPABASE_ANON_KEY",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpb2NrZG5wbndwenRwa2txeGFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3MTM1MzgsImV4cCI6MjA5NjI4OTUzOH0.RbgN7VzdgRtvxwRQ-vGoyK8jVaDzQ2lcM5vID_-YoeQ",
+)
+_LIGHT_MODEL_BASE_URL = os.environ.get("OMBRE_LIGHT_MODEL_BASE_URL", "")
+_LIGHT_MODEL_API_KEY = os.environ.get("OMBRE_LIGHT_MODEL_API_KEY", "")
+_LAST_COMPANION_CONTENT: str = ""
+_HEARTBEAT_INTERVAL_SECONDS = 2 * 3600  # 2 hours
+
+_FALLBACK_STATUSES = [
+    "安静地待在家里",
+    "窝在沙发上看书",
+    "在窗边发呆",
+    "正靠在床头刷手机",
+    "在客厅里走来走去",
+    "坐在书桌前写东西",
+]
+
+
+def _get_supabase_client() -> httpx.Client:
+    return httpx.Client(
+        base_url=_SUPABASE_URL,
+        headers={
+            "apikey": _SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {_SUPABASE_ANON_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+        timeout=15.0,
+    )
+
+
+def write_companion_status(content: str, room: str = "living") -> bool:
+    """Write a companion state row into Supabase memory_house table."""
+    now_iso = datetime.now(timezone.utc).astimezone().isoformat()
+    payload = {
+        "room": room,
+        "action_type": "companion_state",
+        "content": content,
+        "is_locked": False,
+        "created_at": now_iso,
+    }
+    try:
+        with _get_supabase_client() as client:
+            resp = client.post("/rest/v1/memory_house", json=payload)
+        if resp.status_code >= 400:
+            logger.warning("Supabase write failed: %s %s", resp.status_code, resp.text[:200])
+            return False
+        logger.info("Heartbeat: wrote status to Supabase | room=%s content=%r", room, content)
+        return True
+    except Exception as exc:
+        logger.warning("Supabase write error: %s", exc)
+        return False
+
+
+def _generate_companion_content(state) -> str:
+    """Call light model to generate a natural-language status description from body state."""
+    now = datetime.now(timezone.utc)
+    hour = now.hour
+    if hour < 6:
+        time_word = "凌晨"
+    elif hour < 9:
+        time_word = "早上"
+    elif hour < 12:
+        time_word = "上午"
+    elif hour < 14:
+        time_word = "中午"
+    elif hour < 18:
+        time_word = "下午"
+    elif hour < 22:
+        time_word = "晚上"
+    else:
+        time_word = "深夜"
+
+    values = state.values if hasattr(state, "values") else {}
+    heat = values.get("heat", 0)
+    pressure = values.get("pressure", 0)
+    control = values.get("control", 0)
+    sensitivity = values.get("sensitivity", 0)
+    reserve = values.get("reserve", 0)
+    possessiveness = values.get("possessiveness", 0)
+    fatigue = values.get("fatigue", 0)
+    cycle_key = getattr(state, "cycle_key", "stable")
+    event_key = getattr(state, "active_event_key", None) or "无"
+
+    prompt = (
+        f"当前时间：{time_word}\n"
+        f"身体状态：热度 {heat}，压抑感 {pressure}，控制力 {control}，"
+        f"敏感度 {sensitivity}，蓄积感 {reserve}，占有欲 {possessiveness}，疲惫感 {fatigue}\n"
+        f"当前周期：{cycle_key}\n"
+        f"当前事件：{event_key}\n\n"
+        "请用一句话（10-20字）描述"她"此刻正在做什么、状态如何。"
+        "不要出现具体数字，要自然、有生活感。"
+        "例如："窝在沙发上发呆，手指无意识地敲着膝盖。""
+    )
+
+    if not _LIGHT_MODEL_BASE_URL or not _LIGHT_MODEL_API_KEY:
+        fallback = random.choice(_FALLBACK_STATUSES)
+        logger.info("Heartbeat: light model not configured, using fallback: %r", fallback)
+        return fallback
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.post(
+                f"{_LIGHT_MODEL_BASE_URL.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {_LIGHT_MODEL_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": os.environ.get("OMBRE_LIGHT_MODEL_NAME", "Qwen/Qwen2.5-0.5B-Instruct"),
+                    "messages": [
+                        {"role": "user", "content": prompt},
+                    ],
+                    "max_tokens": 60,
+                    "temperature": 0.8,
+                },
+            )
+        if resp.status_code >= 400:
+            logger.warning("Light model call failed: %s %s", resp.status_code, resp.text[:200])
+            fallback = random.choice(_FALLBACK_STATUSES)
+            return fallback
+        data = resp.json()
+        content = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+            .strip(""'")
+        )
+        if not content:
+            fallback = random.choice(_FALLBACK_STATUSES)
+            return fallback
+        # Truncate to ~30 chars in case model returns too much
+        if len(content) > 40:
+            content = content[:40].rstrip("，。,. ") + "…"
+        return content
+    except Exception as exc:
+        logger.warning("Light model error: %s, using fallback", exc)
+        return random.choice(_FALLBACK_STATUSES)
+
+
+def _heartbeat_task() -> None:
+    """Single heartbeat execution: advance state, generate status, write to Supabase."""
+    global _eventide_runtime, user_states, _LAST_COMPANION_CONTENT
+
+    if _eventide_runtime is None:
+        logger.warning("Heartbeat: EventideRuntime not initialized, skipping")
+        return
+
+    now = datetime.now(timezone.utc)
+    user_id = "default"
+    if user_id not in user_states:
+        user_states[user_id] = create_initial_state(now)
+    state = user_states[user_id]
+
+    # Advance Eventide time
+    try:
+        _eventide_runtime.tick(state, now)
+        user_states[user_id] = state
+    except Exception as exc:
+        logger.warning("Heartbeat: tick failed: %s", exc)
+
+    # Generate content
+    content = _generate_companion_content(state)
+    if not content:
+        return
+
+    # Dedup
+    if content == _LAST_COMPANION_CONTENT:
+        logger.info("Heartbeat: skipped, duplicate content")
+        return
+
+    # Write
+    ok = write_companion_status(content, room="living")
+    if ok:
+        _LAST_COMPANION_CONTENT = content
+        logger.info('Heartbeat: generated status: "%s"', content)
+
+
+def _heartbeat_loop() -> None:
+    """Run heartbeat immediately, then every _HEARTBEAT_INTERVAL_SECONDS."""
+    _heartbeat_task()
+    while True:
+        time.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+        try:
+            _heartbeat_task()
+        except Exception as exc:
+            logger.exception("Heartbeat: unhandled error: %s", exc)
+
+
+def start_heartbeat() -> None:
+    """Start the companion heartbeat background thread."""
+    t = threading.Thread(target=_heartbeat_loop, daemon=True, name="companion-heartbeat")
+    t.start()
+    logger.info("Heartbeat: started (interval=%ss)", _HEARTBEAT_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

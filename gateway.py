@@ -20104,16 +20104,25 @@ def create_gateway_app(
     return app
 
 
-def main() -> None:
-    config = load_config()
-    setup_logging(config.get("log_level", "INFO"))
-    gateway_cfg = config.get("gateway", {})
-    app = create_gateway_app(config=config)
-    host = gateway_cfg.get("host", "0.0.0.0")
-    port = int(os.environ.get("PORT", gateway_cfg.get("port", 8010)))
-    logger.info("Ombre Brain gateway starting | host=%s port=%s", host, port)
-    start_heartbeat()
-    uvicorn.run(app, host=host, port=port)
+def main():
+    import traceback
+    try:
+        config = load_config()
+        setup_logging(config.get("log_level", "INFO"))
+        gateway_cfg = config.get("gateway", {})
+        app = create_gateway_app(config=config)
+        host = gateway_cfg.get("host", "0.0.0.0")
+        port = int(os.environ.get("PORT", gateway_cfg.get("port", 8010)))
+        logger.info("Ombre Brain gateway starting | host=%s port=%s", host, port)
+        start_heartbeat()
+        uvicorn.run(app, host=host, port=port)
+    except Exception as e:
+        import sys
+        print("=== FATAL ERROR ===")
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        raise
 
 
 # ---------------------------------------------------------------------------

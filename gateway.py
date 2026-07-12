@@ -25,7 +25,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
 
-from eventide import EventideRuntime, advance_state, render_state_card, body_state_to_dict, create_initial_state
+from eventide.src.eventide import EventideRuntime, advance_state, render_state_card, body_state_to_dict, create_initial_state
 from dashboard_routes import DASHBOARD_ROUTES
 
 from bucket_manager import BucketManager

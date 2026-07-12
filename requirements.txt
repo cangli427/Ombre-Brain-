@@ -34,3 +34,5 @@ python-multipart>=0.0.9
 
 # 向量相似度计算 (导入模式/聚类)
 numpy>=1.24.0
+
+git+https://github.com/chuli1122/Eventide.git

@@ -39,4 +39,4 @@ ENV OMBRE_BUCKETS_DIR=/app/buckets
 EXPOSE 8000
 
 RUN python -c "import sys; print('Python works')"
-CMD ["python", "-c", "import sys; print('Python works'); print('Environment:', dict(os.environ))"]
+CMD ["python", "-c", "import time; import uvicorn; from gateway import create_gateway_app; app = create_gateway_app(); uvicorn.run(app, host='0.0.0.0', port=8080)"]

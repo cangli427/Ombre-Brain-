@@ -10,6 +10,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# 安装 git（解决 Eventide 依赖拉取问题）
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first (leverage Docker cache)
 # 先装依赖（利用 Docker 缓存）
 COPY requirements.txt .

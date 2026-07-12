@@ -38,4 +38,5 @@ ENV OMBRE_BUCKETS_DIR=/app/buckets
 
 EXPOSE 8000
 
-CMD ["python", "gateway.py"]
+RUN python -c "import sys; print('Python works')"
+CMD ["python", "-c", "import sys; print('Python works'); print('Environment:', dict(os.environ))"]

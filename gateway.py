@@ -20252,7 +20252,7 @@ def _generate_companion_content(state) -> str:
             .get("message", {})
             .get("content", "")
             .strip()
-            .strip(""'")
+            .strip('"\'')
         )
         if not content:
             fallback = random.choice(_FALLBACK_STATUSES)

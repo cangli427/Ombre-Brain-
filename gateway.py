@@ -118,16 +118,32 @@ try:
     print("==5==", file=sys.stderr, flush=True)
 
     # ==6== Persona / 原始事件 / 工具类
+
+    print("==6.1==", file=sys.stderr, flush=True)
     from persona_engine import PersonaStateEngine
+
+    print("==6.2==", file=sys.stderr, flush=True)
     from persona_event_selection import (
         format_persona_event_trace_line,
         select_persona_events,
     )
+
+    print("==6.3==", file=sys.stderr, flush=True)
     from raw_events import RawEventStore, raw_event_text_looks_injected, strip_raw_client_context
+
+    print("==6.4==", file=sys.stderr, flush=True)
     from reminder_store import ReminderStore
+
+    print("==6.5==", file=sys.stderr, flush=True)
     from reranker_engine import RerankerEngine
+
+    print("==6.6==", file=sys.stderr, flush=True)
     from self_anchor import is_self_anchor_bucket, is_self_anchor_metadata
+
+    print("==6.7==", file=sys.stderr, flush=True)
     from source_refs import source_ref_window
+
+    print("==6.8==", file=sys.stderr, flush=True)
     from utils import (
         count_tokens_approx,
         bucket_content_for_recall,
@@ -142,6 +158,8 @@ try:
         strip_temperature_meaning_lines,
         strip_wikilinks,
     )
+
+    print("==6.9==", file=sys.stderr, flush=True)
     from word_map import WordMapStore
 
 except Exception as e:

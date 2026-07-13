@@ -20104,21 +20104,28 @@ def create_gateway_app(
     return app
 
 
-def main():
+def main() -> None:
+    import sys
     import traceback
+
+    print("=== DEBUG: main() started ===")
     try:
+        print("=== DEBUG: loading config... ===")
         config = load_config()
+        print("=== DEBUG: config loaded ===")
         setup_logging(config.get("log_level", "INFO"))
         gateway_cfg = config.get("gateway", {})
+        print("=== DEBUG: creating app... ===")
         app = create_gateway_app(config=config)
+        print("=== DEBUG: app created ===")
         host = gateway_cfg.get("host", "0.0.0.0")
         port = int(os.environ.get("PORT", gateway_cfg.get("port", 8010)))
-        logger.info("Ombre Brain gateway starting | host=%s port=%s", host, port)
+        print(f"=== DEBUG: host={host}, port={port} ===")
         start_heartbeat()
+        print("=== DEBUG: about to run uvicorn ===")
         uvicorn.run(app, host=host, port=port)
     except Exception as e:
-        import sys
-        print("=== FATAL ERROR ===")
+        print("=== FATAL ERROR in main() ===")
         traceback.print_exc()
         sys.stdout.flush()
         sys.stderr.flush()

@@ -20145,12 +20145,22 @@ def create_gateway_app(
     global _eventide_runtime
     _eventide_runtime = EventideRuntime()
 
-    os.makedirs('static', exist_ok=True)
+    # --- 绝对路径挂载 static (替换掉原来的 os.makedirs 和 app.mount 那几行) ---
     import os
-    print("CWD:", os.getcwd())
-    print("static exists:", os.path.exists("static"))
-    print("static contents:", os.listdir("static") if os.path.exists("static") else "NOT FOUND")
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+    # 获取当前文件 (gateway.py) 所在的绝对目录
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    static_dir = os.path.join(BASE_DIR, "static")
+
+    # 确保 static 文件夹存在
+    os.makedirs(static_dir, exist_ok=True)
+
+    # 打印信息，方便你在日志里确认路径是否正确
+    print(f"=== Mounting static from: {static_dir} ===")
+    print("static contents:", os.listdir(static_dir) if os.path.exists(static_dir) else "NOT FOUND")
+
+    # 挂载静态文件目录
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     return app
 

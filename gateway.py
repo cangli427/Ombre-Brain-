@@ -1,6 +1,7 @@
 import sys; print("=== DEBUG: gateway.py started loading ===", file=sys.stderr); sys.stderr.flush()
 
 try:
+    # ==1== 标准库
     import logging
     import hashlib
     import os
@@ -19,6 +20,9 @@ try:
     from typing import Any
     from zoneinfo import ZoneInfo
 
+    print("==1==", file=sys.stderr, flush=True)
+
+    # ==2== 第三方 Web 框架
     import httpx
     import uvicorn
     from starlette.applications import Starlette
@@ -28,9 +32,15 @@ try:
     from starlette.routing import Route
     from starlette.staticfiles import StaticFiles
 
+    print("==2==", file=sys.stderr, flush=True)
+
+    # ==3== Eventide + Dashboard
     from eventide.src.eventide import EventideRuntime, advance_state, render_state_card, body_state_to_dict, create_initial_state
     from dashboard_routes import DASHBOARD_ROUTES
 
+    print("==3==", file=sys.stderr, flush=True)
+
+    # ==4== 核心记忆引擎（bucket / dehydrator / dream / embedding / diffusion / edges / moments / relevance）
     from bucket_manager import BucketManager
     from dehydrator import Dehydrator
     from dream_engine import DreamEngine
@@ -63,6 +73,10 @@ try:
         recall_topic_query,
         relevance_multiplier,
     )
+
+    print("==4==", file=sys.stderr, flush=True)
+
+    # ==5== 查询理解 / memory_layers / 元数据 / 召回策略 / memory_nodes
     from query_prompts import QUERY_PLANNER_SYSTEM_PROMPT
     from query_understanding import (
         query_intent_rules,
@@ -100,6 +114,10 @@ try:
     from recall_eval import RECALL_EVAL_BLOCKED_SECTIONS, RECALL_EVAL_DEFAULT_CASES
     from recall_policy import QueryAnchorPlan, RecallPolicy, diffusion_seed_topic_term_has_specific_residue
     from memory_nodes import MemoryNodeStore
+
+    print("==5==", file=sys.stderr, flush=True)
+
+    # ==6== Persona / 原始事件 / 工具类
     from persona_engine import PersonaStateEngine
     from persona_event_selection import (
         format_persona_event_trace_line,
@@ -132,7 +150,7 @@ except Exception as e:
     traceback.print_exc(file=sys.stderr)
     sys.stderr.flush()
     raise
-
+    
 logger = logging.getLogger("ombre_brain.gateway")
 
 # Eventide globals

@@ -1,127 +1,137 @@
-import logging
-import hashlib
-import os
-import random
-import re
-import secrets
-import json
-import codecs
-import threading
-import time
-import asyncio
-from contextlib import asynccontextmanager
-from copy import deepcopy
-from dataclasses import replace
-from datetime import datetime, timedelta, timezone
-from typing import Any
-from zoneinfo import ZoneInfo
+import sys; print("=== DEBUG: gateway.py started loading ===", file=sys.stderr); sys.stderr.flush()
 
-import httpx
-import uvicorn
-from starlette.applications import Starlette
-from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
-from starlette.routing import Route
-from starlette.staticfiles import StaticFiles
+try:
+    import logging
+    import hashlib
+    import os
+    import random
+    import re
+    import secrets
+    import json
+    import codecs
+    import threading
+    import time
+    import asyncio
+    from contextlib import asynccontextmanager
+    from copy import deepcopy
+    from dataclasses import replace
+    from datetime import datetime, timedelta, timezone
+    from typing import Any
+    from zoneinfo import ZoneInfo
 
-from eventide.src.eventide import EventideRuntime, advance_state, render_state_card, body_state_to_dict, create_initial_state
-from dashboard_routes import DASHBOARD_ROUTES
+    import httpx
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.middleware.cors import CORSMiddleware
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, Response, StreamingResponse
+    from starlette.routing import Route
+    from starlette.staticfiles import StaticFiles
 
-from bucket_manager import BucketManager
-from dehydrator import Dehydrator
-from dream_engine import DreamEngine
-from embedding_engine import EmbeddingEngine
-from favorite_tags import has_favorite_memory_tag, is_flavor_tag
-from identity import identity_names
-from gateway_state import GatewayStateStore
-from memory_diffusion import (
-    diffuse_memory,
-    diffusion_options_from_config,
-    path_has_caution,
-    path_has_old_version,
-    seed_scores_for_buckets,
-    should_suppress_context_candidate,
-)
-from memory_edges import MemoryEdgeStore
-from entity_edges import EntityEdgeStore
-from memory_moments import MemoryMomentStore, parse_bucket_moments, preview_bucket_moment_chunks
-from memory_relevance import (
-    active_facets,
-    content_terms_for_query,
-    emotional_recall_plan,
-    expanded_terms_for_query,
-    extract_protected_phrases,
-    facets_for_node,
-    facets_for_text,
-    memory_relevance_options_from_config,
-    query_has_facet,
-    recall_rank,
-    recall_topic_query,
-    relevance_multiplier,
-)
-from query_prompts import QUERY_PLANNER_SYSTEM_PROMPT
-from query_understanding import (
-    query_intent_rules,
-    query_intent_term_set,
-    query_intent_terms,
-)
-from memory_layers import (
-    CONTEXT_ONLY_SECTIONS,
-    LAYER_SOURCE_RECORD,
-    bucket_layer_debug,
-    bucket_runtime_gate_debug,
-    can_bucket_be_recent_context,
-    can_bucket_be_related_target,
-    can_moment_be_direct_seed,
-    can_moment_be_recall_context,
-    can_moment_be_related_target,
-    infer_bucket_layer,
-    moment_layer_debug,
-    moment_runtime_gate_debug,
-)
-from memory_metadata import normalize_domain_key, normalize_memory_metadata
-from query_terms import (
-    CHECKIN_TRAILING_PARTICLES,
-    DEFAULT_AI_ADDRESS_TERMS,
-    LEADING_LOOKUP_ADDRESS_FOLLOWUPS,
-    LEADING_LOOKUP_REASON_MARKERS,
-    LOW_SIGNAL_AFFECTION_TERMS,
-    LOW_SIGNAL_CHECKIN_TERMS,
-    MEMORY_SENTINEL_RESIDUE_STRIP_TERMS,
-    QUERY_PLANNER_GENERIC_TERMS,
-    SOURCE_RECORD_FRAGMENT_TOPIC_STOPWORDS,
-    date_recall_shell_terms,
-    identity_address_terms,
-)
-from recall_eval import RECALL_EVAL_BLOCKED_SECTIONS, RECALL_EVAL_DEFAULT_CASES
-from recall_policy import QueryAnchorPlan, RecallPolicy, diffusion_seed_topic_term_has_specific_residue
-from memory_nodes import MemoryNodeStore
-from persona_engine import PersonaStateEngine
-from persona_event_selection import (
-    format_persona_event_trace_line,
-    select_persona_events,
-)
-from raw_events import RawEventStore, raw_event_text_looks_injected, strip_raw_client_context
-from reminder_store import ReminderStore
-from reranker_engine import RerankerEngine
-from self_anchor import is_self_anchor_bucket, is_self_anchor_metadata
-from source_refs import source_ref_window
-from utils import (
-    count_tokens_approx,
-    bucket_content_for_recall,
-    bucket_text_for_embedding,
-    local_date_key,
-    load_config,
-    parse_human_date_reference,
-    setup_logging,
-    strip_human_date_references,
-    strip_display_temperature_sections,
-    strip_followup_sections,
-    strip_temperature_meaning_lines,
-    strip_wikilinks,
-)
-from word_map import WordMapStore
+    from eventide.src.eventide import EventideRuntime, advance_state, render_state_card, body_state_to_dict, create_initial_state
+    from dashboard_routes import DASHBOARD_ROUTES
+
+    from bucket_manager import BucketManager
+    from dehydrator import Dehydrator
+    from dream_engine import DreamEngine
+    from embedding_engine import EmbeddingEngine
+    from favorite_tags import has_favorite_memory_tag, is_flavor_tag
+    from identity import identity_names
+    from gateway_state import GatewayStateStore
+    from memory_diffusion import (
+        diffuse_memory,
+        diffusion_options_from_config,
+        path_has_caution,
+        path_has_old_version,
+        seed_scores_for_buckets,
+        should_suppress_context_candidate,
+    )
+    from memory_edges import MemoryEdgeStore
+    from entity_edges import EntityEdgeStore
+    from memory_moments import MemoryMomentStore, parse_bucket_moments, preview_bucket_moment_chunks
+    from memory_relevance import (
+        active_facets,
+        content_terms_for_query,
+        emotional_recall_plan,
+        expanded_terms_for_query,
+        extract_protected_phrases,
+        facets_for_node,
+        facets_for_text,
+        memory_relevance_options_from_config,
+        query_has_facet,
+        recall_rank,
+        recall_topic_query,
+        relevance_multiplier,
+    )
+    from query_prompts import QUERY_PLANNER_SYSTEM_PROMPT
+    from query_understanding import (
+        query_intent_rules,
+        query_intent_term_set,
+        query_intent_terms,
+    )
+    from memory_layers import (
+        CONTEXT_ONLY_SECTIONS,
+        LAYER_SOURCE_RECORD,
+        bucket_layer_debug,
+        bucket_runtime_gate_debug,
+        can_bucket_be_recent_context,
+        can_bucket_be_related_target,
+        can_moment_be_direct_seed,
+        can_moment_be_recall_context,
+        can_moment_be_related_target,
+        infer_bucket_layer,
+        moment_layer_debug,
+        moment_runtime_gate_debug,
+    )
+    from memory_metadata import normalize_domain_key, normalize_memory_metadata
+    from query_terms import (
+        CHECKIN_TRAILING_PARTICLES,
+        DEFAULT_AI_ADDRESS_TERMS,
+        LEADING_LOOKUP_ADDRESS_FOLLOWUPS,
+        LEADING_LOOKUP_REASON_MARKERS,
+        LOW_SIGNAL_AFFECTION_TERMS,
+        LOW_SIGNAL_CHECKIN_TERMS,
+        MEMORY_SENTINEL_RESIDUE_STRIP_TERMS,
+        QUERY_PLANNER_GENERIC_TERMS,
+        SOURCE_RECORD_FRAGMENT_TOPIC_STOPWORDS,
+        date_recall_shell_terms,
+        identity_address_terms,
+    )
+    from recall_eval import RECALL_EVAL_BLOCKED_SECTIONS, RECALL_EVAL_DEFAULT_CASES
+    from recall_policy import QueryAnchorPlan, RecallPolicy, diffusion_seed_topic_term_has_specific_residue
+    from memory_nodes import MemoryNodeStore
+    from persona_engine import PersonaStateEngine
+    from persona_event_selection import (
+        format_persona_event_trace_line,
+        select_persona_events,
+    )
+    from raw_events import RawEventStore, raw_event_text_looks_injected, strip_raw_client_context
+    from reminder_store import ReminderStore
+    from reranker_engine import RerankerEngine
+    from self_anchor import is_self_anchor_bucket, is_self_anchor_metadata
+    from source_refs import source_ref_window
+    from utils import (
+        count_tokens_approx,
+        bucket_content_for_recall,
+        bucket_text_for_embedding,
+        local_date_key,
+        load_config,
+        parse_human_date_reference,
+        setup_logging,
+        strip_human_date_references,
+        strip_display_temperature_sections,
+        strip_followup_sections,
+        strip_temperature_meaning_lines,
+        strip_wikilinks,
+    )
+    from word_map import WordMapStore
+
+except Exception as e:
+    import traceback
+    print("=== DEBUG: gateway.py IMPORT FAILED ===", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
+    sys.stderr.flush()
+    raise
 
 logger = logging.getLogger("ombre_brain.gateway")
 

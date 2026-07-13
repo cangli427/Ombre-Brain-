@@ -20146,6 +20146,10 @@ def create_gateway_app(
     _eventide_runtime = EventideRuntime()
 
     os.makedirs('static', exist_ok=True)
+    import os
+    print("CWD:", os.getcwd())
+    print("static exists:", os.path.exists("static"))
+    print("static contents:", os.listdir("static") if os.path.exists("static") else "NOT FOUND")
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
     return app

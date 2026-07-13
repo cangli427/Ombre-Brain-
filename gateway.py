@@ -20145,7 +20145,7 @@ def create_gateway_app(
     global _eventide_runtime
     _eventide_runtime = EventideRuntime()
 
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    # app.mount("/static", StaticFiles(directory="static"), name="static")
 
     return app
 

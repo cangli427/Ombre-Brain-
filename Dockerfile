@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project files / 复制项目文件
 COPY *.py .
+COPY static ./static
 COPY eventide ./eventide
 COPY resources ./resources
 COPY scripts ./scripts
